@@ -528,13 +528,15 @@ static bool ReadChunk(SGhostLoader *pLoader, int *pType) {
 static bool ReadNextType(SGhostLoader *pLoader, int *pType) {
   if (!pLoader->m_File) {
     fprintf(stderr, "ghost_loader: File not open\n");
-    return 1;
+    *pType = -1;
+    return false;
   }
 
   if (pLoader->m_BufferCurItem != pLoader->m_BufferPrevItem &&
       pLoader->m_BufferCurItem < pLoader->m_BufferNumItems) {
     *pType = pLoader->m_LastItem.m_Type;
   } else if (!ReadChunk(pLoader, pType)) {
+    *pType = -1;
     return false; // error or EOF
   }
 
@@ -629,7 +631,7 @@ static SGhostLoader Load(const char *pFilename) {
 }
 
 SGhostCharacter *ghost_path_get(SGhostPath *pPath, int Index) {
-  if (Index < 0 || Index >= pPath->m_NumItems)
+  if (!pPath || !pPath->m_vpChunks || Index < 0 || Index >= pPath->m_NumItems)
     return NULL;
 
   int Chunk = Index / pPath->m_ChunkSize;
@@ -688,9 +690,14 @@ static void SetGhostSkinData(SGhostSkin *pSkin, const char *pSkinName,
 }
 
 static void ResetGhostPath(SGhostPath *pPath) {
+  pPath->m_ChunkSize = 25 * 60;
+  int Chunks =
+      (pPath->m_NumItems + pPath->m_ChunkSize - 1) / pPath->m_ChunkSize;
+  for (int i = 0; i < Chunks; ++i)
+    free(pPath->m_vpChunks[i]);
+  free(pPath->m_vpChunks);
   pPath->m_NumItems = 0;
   pPath->m_vpChunks = NULL;
-  pPath->m_ChunkSize = 25 * 60;
 }
 
 static void SetGhostPathSize(SGhostPath *pPath, int Items) {
@@ -798,3 +805,5 @@ int load_ghost(SGhost *pGhost, const char *pFilename) {
 
   return 0;
 }
+
+void free_ghost(SGhost *pGhost) { ResetGhost(pGhost); }

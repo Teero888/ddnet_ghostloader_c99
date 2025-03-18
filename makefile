@@ -1,5 +1,5 @@
-CC = gcc
-CFLAGS = -std=c99 -Wall -pedantic
+CC = cc
+CFLAGS = -std=c99 -Wall -pedantic -fsanitize=address,undefined -fsanitize-recover=address,undefined -fno-omit-frame-pointer
 BUILD_DIR = build
 SRCS = example.c ghost.c
 OBJS = $(patsubst %.c, $(BUILD_DIR)/%.o, $(SRCS))

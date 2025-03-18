@@ -15,7 +15,7 @@ int main(void) {
            "\tPos: %d,%d\n"
            "\tVel: %d,%d\n"
            "\tAngle: %d\n",
-           i, pChar->m_X, pChar->m_Y, pChar->m_VelX, pChar->m_VelY,
+           i, pChar->m_X / 32, pChar->m_Y / 32, pChar->m_VelX / 256, pChar->m_VelY / 256,
            pChar->m_Angle);
   }
 
@@ -31,5 +31,6 @@ int main(void) {
          Ghost.m_Skin.m_ColorFeet, Ghost.m_Skin.m_UseCustomColor,
          Ghost.m_StartTick, Ghost.m_Time / 1000.f, Ghost.m_Path.m_NumItems);
 
+  free_ghost(&Ghost);
   return 0;
 }

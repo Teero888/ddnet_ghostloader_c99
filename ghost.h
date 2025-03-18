@@ -47,5 +47,6 @@ struct Ghost {
 
 SGhostCharacter *ghost_path_get(SGhostPath *pPath, int Index);
 int load_ghost(SGhost *pGhost, const char *pFilename);
+void free_ghost(SGhost *pGhost);
 
 #endif // LIB_GHOST_H
