@@ -1,4 +1,4 @@
-#include "ghost.h"
+#include "ghost_loader.h"
 #include <stdio.h>
 
 int main(void) {
@@ -25,7 +25,7 @@ int main(void) {
          "\tcolor feet: %d\n"
          "\tuse custom color: %d\n"
          "\tstart tick: %d\n"
-         "\ttime: %f\n"
+         "\tfinish time: %f\n"
          "\tnum snaps: %d\n",
          Ghost.m_aPlayer, Ghost.m_Skin.m_aSkinName, Ghost.m_Skin.m_ColorBody,
          Ghost.m_Skin.m_ColorFeet, Ghost.m_Skin.m_UseCustomColor,

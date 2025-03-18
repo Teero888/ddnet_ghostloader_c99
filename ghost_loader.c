@@ -1,6 +1,6 @@
 // vim:foldmethod=marker
 
-#include "ghost.h"
+#include "ghost_loader.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
