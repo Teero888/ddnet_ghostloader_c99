@@ -343,7 +343,7 @@ static bool validate_header(const ghost_header_t *header,
 
 typedef void *io_handle_t;
 static io_handle_t read_header(ghost_header_t *header, const char *filename) {
-  FILE *file = fopen(filename, "r");
+  FILE *file = fopen(filename, "rb");
   if (!file) {
     fprintf(stderr,
             "ghost_loader: Failed to open ghost file '%s' for reading\n",
