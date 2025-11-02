@@ -86,9 +86,9 @@ int main(void) {
     ghost_free(ghost);
     return 1;
   }
-  printf("Ghost file written back successfully to 'written_ghost->gho'\n");
+  printf("Ghost file written back successfully to 'written_ghost.gho'\n");
 
-  ghost_t *ghost2 = ghost_load("written_ghost->gho");
+  ghost_t *ghost2 = ghost_load("written_ghost.gho");
   if (!ghost2) {
     printf("Written ghost file could not be loaded\n");
     ghost_free(ghost);
