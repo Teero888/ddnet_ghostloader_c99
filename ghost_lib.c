@@ -1,5 +1,3 @@
-// vim:foldmethod=marker
-
 #include "ghost_lib.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -8,8 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Huffman {{{
-
 #define HUFFMAN_EOF_SYMBOL 256
 #define HUFFMAN_MAX_SYMBOLS (HUFFMAN_EOF_SYMBOL + 1)
 #define HUFFMAN_MAX_NODES (HUFFMAN_MAX_SYMBOLS * 2 - 1)
@@ -17,19 +13,19 @@
 #define HUFFMAN_LUTSIZE (1 << HUFFMAN_LUTBITS)
 #define HUFFMAN_LUTMASK (HUFFMAN_LUTSIZE - 1)
 
-typedef struct Node {
-  unsigned m_Bits;
-  unsigned m_NumBits;
-  unsigned short m_aLeafs[2];
-  unsigned char m_Symbol;
-} Node;
+typedef struct huffman_node_t {
+  unsigned bits;
+  unsigned num_bits;
+  unsigned short leafs[2];
+  unsigned char symbol;
+} huffman_node_t;
 
-typedef struct HuffmanContext {
-  Node m_aNodes[HUFFMAN_MAX_NODES];
-  Node *m_apDecodeLut[HUFFMAN_LUTSIZE];
-  Node *m_pStartNode;
-  int m_NumNodes;
-} HuffmanContext;
+typedef struct huffman_context_t {
+  huffman_node_t nodes[HUFFMAN_MAX_NODES];
+  huffman_node_t *decode_lut[HUFFMAN_LUTSIZE];
+  huffman_node_t *start_node;
+  int num_nodes;
+} huffman_context_t;
 
 static const unsigned huffman_freq_table[HUFFMAN_MAX_SYMBOLS] = {
     1 << 30, 4545, 2657, 431, 1950, 919,  444, 482, 2244, 617, 838, 542,  715,
@@ -53,98 +49,94 @@ static const unsigned huffman_freq_table[HUFFMAN_MAX_SYMBOLS] = {
     19,      18,   16,   26,  17,   18,   9,   10,  25,   22,  22,  17,   20,
     16,      6,    16,   15,  20,   14,   18,  24,  335,  1517};
 
-typedef struct {
-  unsigned short m_NodeId;
-  int m_Frequency;
-} ConstructNode;
+typedef struct construct_node_t {
+  unsigned short node_id;
+  int frequency;
+} construct_node_t;
 
 static int compare_nodes(const void *a, const void *b) {
-  const ConstructNode *na = *(const ConstructNode **)a;
-  const ConstructNode *nb = *(const ConstructNode **)b;
-  return nb->m_Frequency - na->m_Frequency;
+  const construct_node_t *node_a = *(const construct_node_t **)a;
+  const construct_node_t *node_b = *(const construct_node_t **)b;
+  return node_b->frequency - node_a->frequency;
 }
 
-static void set_bits_recursive(Node *nodes, Node *node, int bits,
+static void set_bits_recursive(huffman_node_t *nodes, huffman_node_t *node, int bits,
                                unsigned depth) {
-  if (node->m_aLeafs[1] != 0xffff)
-    set_bits_recursive(nodes, &nodes[node->m_aLeafs[1]], bits | (1 << depth),
+  if (node->leafs[1] != 0xffff)
+    set_bits_recursive(nodes, &nodes[node->leafs[1]], bits | (1 << depth),
                        depth + 1);
-  if (node->m_aLeafs[0] != 0xffff)
-    set_bits_recursive(nodes, &nodes[node->m_aLeafs[0]], bits, depth + 1);
+  if (node->leafs[0] != 0xffff)
+    set_bits_recursive(nodes, &nodes[node->leafs[0]], bits, depth + 1);
 
-  if (node->m_NumBits) {
-    node->m_Bits = bits;
-    node->m_NumBits = depth;
+  if (node->num_bits) {
+    node->bits = bits;
+    node->num_bits = depth;
   }
 }
 
-static void construct_tree(HuffmanContext *ctx, const unsigned *frequencies) {
-  ConstructNode nodes_left_storage[HUFFMAN_MAX_SYMBOLS];
-  ConstructNode *nodes_left[HUFFMAN_MAX_SYMBOLS];
+static void construct_tree(huffman_context_t *ctx, const unsigned *frequencies) {
+  construct_node_t nodes_left_storage[HUFFMAN_MAX_SYMBOLS];
+  construct_node_t *nodes_left[HUFFMAN_MAX_SYMBOLS];
   int num_nodes_left = HUFFMAN_MAX_SYMBOLS;
 
-  // Initialize nodes
   for (int i = 0; i < HUFFMAN_MAX_SYMBOLS; i++) {
-    ctx->m_aNodes[i].m_NumBits = 0xFFFFFFFF;
-    ctx->m_aNodes[i].m_Symbol = i;
-    ctx->m_aNodes[i].m_aLeafs[0] = 0xffff;
-    ctx->m_aNodes[i].m_aLeafs[1] = 0xffff;
+    ctx->nodes[i].num_bits = 0xFFFFFFFF;
+    ctx->nodes[i].symbol = i;
+    ctx->nodes[i].leafs[0] = 0xffff;
+    ctx->nodes[i].leafs[1] = 0xffff;
 
-    nodes_left_storage[i].m_Frequency =
+    nodes_left_storage[i].frequency =
         (i == HUFFMAN_EOF_SYMBOL) ? 1 : frequencies[i];
-    nodes_left_storage[i].m_NodeId = i;
+    nodes_left_storage[i].node_id = i;
     nodes_left[i] = &nodes_left_storage[i];
   }
 
-  ctx->m_NumNodes = HUFFMAN_MAX_SYMBOLS;
+  ctx->num_nodes = HUFFMAN_MAX_SYMBOLS;
 
-  // Build tree
   while (num_nodes_left > 1) {
-    qsort(nodes_left, num_nodes_left, sizeof(ConstructNode *), compare_nodes);
+    qsort(nodes_left, num_nodes_left, sizeof(construct_node_t *), compare_nodes);
 
-    Node *new_node = &ctx->m_aNodes[ctx->m_NumNodes];
-    new_node->m_NumBits = 0;
-    new_node->m_aLeafs[0] = nodes_left[num_nodes_left - 1]->m_NodeId;
-    new_node->m_aLeafs[1] = nodes_left[num_nodes_left - 2]->m_NodeId;
+    huffman_node_t *new_node = &ctx->nodes[ctx->num_nodes];
+    new_node->num_bits = 0;
+    new_node->leafs[0] = nodes_left[num_nodes_left - 1]->node_id;
+    new_node->leafs[1] = nodes_left[num_nodes_left - 2]->node_id;
 
-    nodes_left[num_nodes_left - 2]->m_NodeId = ctx->m_NumNodes;
-    nodes_left[num_nodes_left - 2]->m_Frequency +=
-        nodes_left[num_nodes_left - 1]->m_Frequency;
+    nodes_left[num_nodes_left - 2]->node_id = ctx->num_nodes;
+    nodes_left[num_nodes_left - 2]->frequency +=
+        nodes_left[num_nodes_left - 1]->frequency;
 
-    ctx->m_NumNodes++;
+    ctx->num_nodes++;
     num_nodes_left--;
   }
 
-  // Set start node and build bits
-  ctx->m_pStartNode = &ctx->m_aNodes[ctx->m_NumNodes - 1];
-  set_bits_recursive(ctx->m_aNodes, ctx->m_pStartNode, 0, 0);
+  ctx->start_node = &ctx->nodes[ctx->num_nodes - 1];
+  set_bits_recursive(ctx->nodes, ctx->start_node, 0, 0);
 }
 
-void huffman_init(HuffmanContext *ctx) {
+void huffman_init(huffman_context_t *ctx) {
   memset(ctx, 0, sizeof(*ctx));
   construct_tree(ctx, huffman_freq_table);
 
-  // Build decode LUT
   for (int i = 0; i < HUFFMAN_LUTSIZE; i++) {
     unsigned bits = i;
-    Node *node = ctx->m_pStartNode;
+    huffman_node_t *node = ctx->start_node;
 
     for (int k = 0; k < HUFFMAN_LUTBITS; k++) {
-      node = &ctx->m_aNodes[node->m_aLeafs[bits & 1]];
+      node = &ctx->nodes[node->leafs[bits & 1]];
       bits >>= 1;
 
-      if (node->m_NumBits) {
-        ctx->m_apDecodeLut[i] = node;
+      if (node->num_bits) {
+        ctx->decode_lut[i] = node;
         break;
       }
     }
 
-    if (!ctx->m_apDecodeLut[i])
-      ctx->m_apDecodeLut[i] = node;
+    if (!ctx->decode_lut[i])
+      ctx->decode_lut[i] = node;
   }
 }
 
-int huffman_decompress(const HuffmanContext *ctx, const void *input,
+int huffman_decompress(const huffman_context_t *ctx, const void *input,
                        int in_size, void *output, int out_size) {
   const unsigned char *src = (const unsigned char *)input;
   const unsigned char *src_end = src + in_size;
@@ -153,13 +145,13 @@ int huffman_decompress(const HuffmanContext *ctx, const void *input,
 
   unsigned bits = 0;
   unsigned bitcount = 0;
-  const Node *eof = &ctx->m_aNodes[HUFFMAN_EOF_SYMBOL];
+  const huffman_node_t *eof = &ctx->nodes[HUFFMAN_EOF_SYMBOL];
 
   while (1) {
-    const Node *node = NULL;
+    const huffman_node_t *node = NULL;
 
     if (bitcount >= HUFFMAN_LUTBITS)
-      node = ctx->m_apDecodeLut[bits & HUFFMAN_LUTMASK];
+      node = ctx->decode_lut[bits & HUFFMAN_LUTMASK];
 
     while (bitcount < 24 && src < src_end) {
       bits |= (*src++) << bitcount;
@@ -167,24 +159,24 @@ int huffman_decompress(const HuffmanContext *ctx, const void *input,
     }
 
     if (!node)
-      node = ctx->m_apDecodeLut[bits & HUFFMAN_LUTMASK];
+      node = ctx->decode_lut[bits & HUFFMAN_LUTMASK];
 
     if (!node)
       return -1;
 
-    if (node->m_NumBits) {
-      bits >>= node->m_NumBits;
-      bitcount -= node->m_NumBits;
+    if (node->num_bits) {
+      bits >>= node->num_bits;
+      bitcount -= node->num_bits;
     } else {
       bits >>= HUFFMAN_LUTBITS;
       bitcount -= HUFFMAN_LUTBITS;
 
       while (1) {
-        node = &ctx->m_aNodes[node->m_aLeafs[bits & 1]];
+        node = &ctx->nodes[node->leafs[bits & 1]];
         bits >>= 1;
         bitcount--;
 
-        if (node->m_NumBits)
+        if (node->num_bits)
           break;
         if (bitcount == 0)
           return -1;
@@ -195,13 +187,11 @@ int huffman_decompress(const HuffmanContext *ctx, const void *input,
       break;
     if (dst >= dst_end)
       return -1;
-    *dst++ = node->m_Symbol;
+    *dst++ = node->symbol;
   }
 
   return (int)(dst - (unsigned char *)output);
 }
-
-// }}}
 
 enum {
   MAX_ITEM_SIZE = 128,
@@ -213,33 +203,32 @@ enum {
   SHA256_MAXSTRSIZE = 2 * SHA256_DIGEST_LENGTH + 1,
 };
 
-struct SHA256_DIGEST {
+struct sha256_digest_t {
   unsigned char data[SHA256_DIGEST_LENGTH];
-} typedef SHA256_DIGEST;
+} typedef sha256_digest_t;
 
-struct GhostInfo {
-  char m_aOwner[MAX_NAME_LENGTH];
-  char m_aMap[64];
-  int m_NumTicks;
-  int m_Time;
-} typedef SGhostInfo;
+struct ghost_info_t {
+  char owner[MAX_NAME_LENGTH];
+  char map[64];
+  int num_ticks;
+  int time;
+} typedef ghost_info_t;
 
-// version 4-6
-struct GhostHeader {
-  unsigned char m_aMarker[8];
-  unsigned char m_Version;
-  char m_aOwner[MAX_NAME_LENGTH];
-  char m_aMap[64];
-  unsigned char m_aZeroes[sizeof(int32_t)]; // Crc before version 6
-  unsigned char m_aNumTicks[sizeof(int32_t)];
-  unsigned char m_aTime[sizeof(int32_t)];
-  SHA256_DIGEST m_MapSha256;
-} typedef SGhostHeader;
+struct ghost_header_t {
+  unsigned char marker[8];
+  unsigned char version;
+  char owner[MAX_NAME_LENGTH];
+  char map[64];
+  unsigned char zeroes[sizeof(int32_t)];
+  unsigned char num_ticks[sizeof(int32_t)];
+  unsigned char time[sizeof(int32_t)];
+  sha256_digest_t map_sha256;
+} typedef ghost_header_t;
 
-struct GhostItem {
-  uint32_t m_aData[MAX_ITEM_SIZE];
-  int m_Type;
-} typedef SGhostItem;
+struct ghost_item_t {
+  uint32_t data[MAX_ITEM_SIZE];
+  int type;
+} typedef ghost_item_t;
 
 enum {
   GHOSTDATA_TYPE_SKIN = 0,
@@ -248,26 +237,27 @@ enum {
   GHOSTDATA_TYPE_START_TICK
 };
 
-struct GhostLoader {
-  void *m_File;
-  char m_aFilename[IO_MAX_PATH_LENGTH];
+struct ghost_loader_t {
+  void *file;
+  char filename[IO_MAX_PATH_LENGTH];
 
-  SGhostHeader m_Header;
-  SGhostInfo m_Info;
+  ghost_header_t header;
+  ghost_info_t info;
 
-  uint32_t m_aBuffer[MAX_CHUNK_SIZE];
-  uint32_t m_aBufferTemp[MAX_CHUNK_SIZE];
-  uint32_t *m_pBufferPos;
-  uint32_t *m_pBufferEnd;
-  int m_BufferNumItems;
-  int m_BufferCurItem;
-  int m_BufferPrevItem;
-  SGhostItem m_LastItem;
-} typedef SGhostLoader;
+  unsigned char buffer[MAX_CHUNK_SIZE];
+  unsigned char buffer_temp[MAX_CHUNK_SIZE];
+  unsigned char *buffer_pos;
+  unsigned char *buffer_end;
 
-static const unsigned char gs_aHeaderMarker[8] = {'T', 'W', 'G', 'H',
-                                                  'O', 'S', 'T', 0};
-static const unsigned char gs_CurVersion = 6;
+  int buffer_num_items;
+  int buffer_cur_item;
+  int buffer_prev_item;
+  ghost_item_t last_item;
+} typedef ghost_loader_t;
+
+static const unsigned char header_marker[8] = {'T', 'W', 'G', 'H',
+                                               'O', 'S', 'T', 0};
+static const unsigned char current_version = 6;
 
 static bool mem_has_null(const void *block, size_t size) {
   const unsigned char *bytes = (const unsigned char *)block;
@@ -285,98 +275,98 @@ static unsigned bytes_be_to_uint(const unsigned char *bytes) {
          ((bytes[2] & 0xffu) << 8u) | (bytes[3] & 0xffu);
 }
 
-static int GetTicks(const SGhostHeader *pHeader) {
-  return bytes_be_to_uint(pHeader->m_aNumTicks);
+static int get_ticks(const ghost_header_t *header) {
+  return bytes_be_to_uint(header->num_ticks);
 }
 
-static int GetTime(const SGhostHeader *pHeader) {
-  return bytes_be_to_uint(pHeader->m_aTime);
+static int get_time(const ghost_header_t *header) {
+  return bytes_be_to_uint(header->time);
 }
 
-static bool ValidateHeader(const SGhostHeader *pHeader, const char *pFilename) {
-  if (memcmp(pHeader->m_aMarker, gs_aHeaderMarker, sizeof(gs_aHeaderMarker)) !=
+static bool validate_header(const ghost_header_t *header, const char *filename) {
+  if (memcmp(header->marker, header_marker, sizeof(header_marker)) !=
       0) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': invalid header marker\n",
-        pFilename);
+        filename);
     return false;
   }
 
-  if (pHeader->m_Version < 4 || pHeader->m_Version > gs_CurVersion) {
+  if (header->version < 4 || header->version > current_version) {
     fprintf(stderr,
             "ghost_loader: Failed to read ghost file '%s': ghost version '%d' "
             "is not supported\n",
-            pFilename, pHeader->m_Version);
+            filename, header->version);
     return false;
   }
 
-  if (!mem_has_null(pHeader->m_aOwner, sizeof(pHeader->m_aOwner))) {
+  if (!mem_has_null(header->owner, sizeof(header->owner))) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': owner name is invalid\n",
-        pFilename);
+        filename);
     return false;
   }
 
-  if (!mem_has_null(pHeader->m_aMap, sizeof(pHeader->m_aMap))) {
+  if (!mem_has_null(header->map, sizeof(header->map))) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': map name is invalid\n",
-        pFilename);
+        filename);
     return false;
   }
 
-  const int NumTicks = GetTicks(pHeader);
-  if (NumTicks <= 0) {
+  const int num_ticks = get_ticks(header);
+  if (num_ticks <= 0) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': number of ticks '%d' "
         "is invalid\n",
-        pFilename, NumTicks);
+        filename, num_ticks);
     return false;
   }
 
-  const int Time = GetTime(pHeader);
-  if (Time <= 0) {
+  const int time = get_time(header);
+  if (time <= 0) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': time '%d' is invalid\n",
-        pFilename, Time);
+        filename, time);
     return false;
   }
 
   return true;
 }
 
-typedef void *IOHANDLE;
-static IOHANDLE ReadHeader(SGhostHeader *pHeader, const char *pFilename) {
-  FILE *pFile = fopen(pFilename, "r");
-  if (!pFile) {
+typedef void *io_handle_t;
+static io_handle_t read_header(ghost_header_t *header, const char *filename) {
+  FILE *file = fopen(filename, "r");
+  if (!file) {
     fprintf(stderr,
             "ghost_loader: Failed to open ghost file '%s' for reading\n",
-            pFilename);
+            filename);
     return NULL;
   }
 
-  if (fread(pHeader, sizeof(*pHeader), 1, pFile) != 1) {
+  if (fread(header, sizeof(*header), 1, file) != 1) {
     fprintf(stderr,
             "ghost_loader: Failed to read ghost file '%s': failed to read "
             "header\n",
-            pFilename);
-    fclose(pFile);
+            filename);
+    fclose(file);
     return NULL;
   }
 
-  if (!ValidateHeader(pHeader, pFilename)) {
-    fclose(pFile);
+  if (!validate_header(header, filename)) {
+    fclose(file);
     return NULL;
   }
 
-  return pFile;
+  return file;
 }
 
-static int io_seek(IOHANDLE io, int64_t offset) {
+static int io_seek(io_handle_t io, int64_t offset) {
 #if defined(CONF_FAMILY_WINDOWS)
   return _fseeki64((FILE *)io, offset, SEEK_CUR);
 #else
@@ -384,439 +374,426 @@ static int io_seek(IOHANDLE io, int64_t offset) {
 #endif
 }
 
-static SGhostInfo ToGhostInfo(SGhostHeader *pHeader) {
-  SGhostInfo Result;
-  strcpy(Result.m_aOwner, pHeader->m_aOwner);
-  strcpy(Result.m_aMap, pHeader->m_aMap);
-  Result.m_NumTicks = GetTicks(pHeader);
-  Result.m_Time = GetTime(pHeader);
-  return Result;
+static ghost_info_t to_ghost_info(ghost_header_t *header) {
+  ghost_info_t result;
+  strcpy(result.owner, header->owner);
+  strcpy(result.map, header->map);
+  result.num_ticks = get_ticks(header);
+  result.time = get_time(header);
+  return result;
 }
 
-static void ResetBuffer(SGhostLoader *pLoader) {
-  pLoader->m_pBufferPos = pLoader->m_aBuffer;
-  pLoader->m_pBufferEnd = pLoader->m_aBuffer;
-  pLoader->m_BufferNumItems = 0;
-  pLoader->m_BufferCurItem = 0;
-  pLoader->m_BufferPrevItem = -1;
+static void reset_loader_buffer(ghost_loader_t *loader) {
+  loader->buffer_pos = loader->buffer;
+  loader->buffer_end = loader->buffer;
+  loader->buffer_num_items = 0;
+  loader->buffer_cur_item = 0;
+  loader->buffer_prev_item = -1;
 }
 
-static void UndiffItem(const uint32_t *pPast, const uint32_t *pDiff,
-                       uint32_t *pOut, size_t Size) {
-  while (Size) {
-    *pOut = *pPast + *pDiff;
-    pOut++;
-    pPast++;
-    pDiff++;
-    Size--;
+static void undiff_item(const uint32_t *past, const uint32_t *diff,
+                        uint32_t *out, size_t size) {
+  while (size) {
+    *out = *past + *diff;
+    out++;
+    past++;
+    diff++;
+    size--;
   }
 }
 
-static const unsigned char *VarUnpack(const unsigned char *pSrc, int *pInOut,
-                                      int SrcSize) {
-  if (SrcSize <= 0)
+static const unsigned char *var_unpack(const unsigned char *src, int *in_out,
+                                       int src_size) {
+  if (src_size <= 0)
     return NULL;
 
-  const int Sign = (*pSrc >> 6) & 1;
-  *pInOut = *pSrc & 0x3F;
-  SrcSize--;
+  const int sign = (*src >> 6) & 1;
+  *in_out = *src & 0x3F;
+  src_size--;
 
-  static const int s_aMasks[] = {0x7F, 0x7F, 0x7F, 0x0F};
-  static const int s_aShifts[] = {6, 6 + 7, 6 + 7 + 7, 6 + 7 + 7 + 7};
+  static const int var_unpack_masks[] = {0x7F, 0x7F, 0x7F, 0x0F};
+  static const int var_unpack_shifts[] = {6, 6 + 7, 6 + 7 + 7, 6 + 7 + 7 + 7};
 
   for (unsigned i = 0; i < 4; i++) {
-    if (!(*pSrc & 0x80))
+    if (!(*src & 0x80))
       break;
-    if (SrcSize <= 0)
+    if (src_size <= 0)
       return NULL;
-    SrcSize--;
-    pSrc++;
-    *pInOut |= (*pSrc & s_aMasks[i]) << s_aShifts[i];
+    src_size--;
+    src++;
+    *in_out |= (*src & var_unpack_masks[i]) << var_unpack_shifts[i];
   }
 
-  pSrc++;
-  *pInOut ^= -Sign; // if(sign) *i = ~(*i)
-  return pSrc;
+  src++;
+  *in_out ^= -sign;
+  return src;
 }
 
-static long VarDecompress(const void *pSrc_, int SrcSize, void *pDst_,
-                          int DstSize) {
-  if (DstSize % sizeof(int) != 0) {
+static long var_decompress(const void *src_void, int src_size, void *dst_void,
+                           int dst_size) {
+  if (dst_size % sizeof(int) != 0) {
     return -1;
     fprintf(stderr, "Variable int invalid bounds\n");
   }
 
-  const unsigned char *pSrc = (unsigned char *)pSrc_;
-  const unsigned char *pSrcEnd = pSrc + SrcSize;
-  int *pDst = (int *)pDst_;
-  const int *pDstEnd = pDst + DstSize / sizeof(int);
-  while (pSrc < pSrcEnd) {
-    if (pDst >= pDstEnd)
+  const unsigned char *src = (unsigned char *)src_void;
+  const unsigned char *src_end = src + src_size;
+  int *dst = (int *)dst_void;
+  const int *dst_end = dst + dst_size / sizeof(int);
+  while (src < src_end) {
+    if (dst >= dst_end)
       return -1;
-    pSrc = VarUnpack(pSrc, pDst, pSrcEnd - pSrc);
-    if (!pSrc)
+    src = var_unpack(src, dst, src_end - src);
+    if (!src)
       return -1;
-    pDst++;
+    dst++;
   }
 
-  return (long)((unsigned char *)pDst - (unsigned char *)pDst_);
+  return (long)((unsigned char *)dst - (unsigned char *)dst_void);
 }
 
-static bool ReadChunk(SGhostLoader *pLoader, int *pType) {
-  if (pLoader->m_Header.m_Version != 4) {
-    pLoader->m_LastItem.m_Type = -1;
+static bool read_chunk(ghost_loader_t *loader, int *type) {
+  if (loader->header.version != 4) {
+    loader->last_item.type = -1;
   }
 
-  ResetBuffer(pLoader);
+  reset_loader_buffer(loader);
 
-  unsigned char aChunkHeader[4];
-  if (fread(aChunkHeader, sizeof(aChunkHeader), 1, pLoader->m_File) != 1) {
-    return false; // EOF
+  unsigned char chunk_header[4];
+  if (fread(chunk_header, sizeof(chunk_header), 1, loader->file) != 1) {
+    return false;
   }
 
-  *pType = aChunkHeader[0];
-  int Size = (aChunkHeader[2] << 8) | aChunkHeader[3];
-  pLoader->m_BufferNumItems = aChunkHeader[1];
+  *type = chunk_header[0];
+  int size = (chunk_header[2] << 8) | chunk_header[3];
+  loader->buffer_num_items = chunk_header[1];
 
-  if (Size <= 0 || Size > MAX_CHUNK_SIZE) {
+  if (size <= 0 || size > MAX_CHUNK_SIZE) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': invalid chunk header "
         "size\n",
-        pLoader->m_aFilename);
+        loader->filename);
     return false;
   }
 
-  if (fread(pLoader->m_aBuffer, Size, 1, pLoader->m_File) != 1) {
+  if (fread(loader->buffer, size, 1, loader->file) != 1) {
     fprintf(stderr,
             "ghost_loader: Failed to read ghost file '%s': error reading chunk "
             "data\n",
-            pLoader->m_aFilename);
+            loader->filename);
     return false;
   }
 
-  HuffmanContext ctx;
+  huffman_context_t ctx;
   huffman_init(&ctx);
 
-  Size =
-      huffman_decompress(&ctx, pLoader->m_aBuffer, Size, pLoader->m_aBufferTemp,
-                         sizeof(pLoader->m_aBufferTemp));
-  if (Size < 0) {
+  size =
+      huffman_decompress(&ctx, loader->buffer, size, loader->buffer_temp,
+                         sizeof(loader->buffer_temp));
+  if (size < 0) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': error during network "
         "decompression\n",
-        pLoader->m_aFilename);
+        loader->filename);
     return false;
   }
 
-  Size = VarDecompress(pLoader->m_aBufferTemp, Size, pLoader->m_aBuffer,
-                       sizeof(pLoader->m_aBuffer));
-  if (Size < 0) {
+  size = var_decompress(loader->buffer_temp, size, loader->buffer,
+                        sizeof(loader->buffer));
+  if (size < 0) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': error during intpack "
         "decompression\n",
-        pLoader->m_aFilename);
+        loader->filename);
     return false;
   }
 
-  pLoader->m_pBufferEnd = pLoader->m_aBuffer + Size;
+  loader->buffer_end = loader->buffer + size;
   return true;
 }
 
-static bool ReadNextType(SGhostLoader *pLoader, int *pType) {
-  if (!pLoader->m_File) {
+static bool read_next_type(ghost_loader_t *loader, int *type) {
+  if (!loader->file) {
     fprintf(stderr, "ghost_loader: File not open\n");
-    *pType = -1;
+    *type = -1;
     return false;
   }
 
-  if (pLoader->m_BufferCurItem != pLoader->m_BufferPrevItem &&
-      pLoader->m_BufferCurItem < pLoader->m_BufferNumItems) {
-    *pType = pLoader->m_LastItem.m_Type;
-  } else if (!ReadChunk(pLoader, pType)) {
-    *pType = -1;
-    return false; // error or EOF
+  if (loader->buffer_cur_item != loader->buffer_prev_item &&
+      loader->buffer_cur_item < loader->buffer_num_items) {
+    *type = loader->last_item.type;
+  } else if (!read_chunk(loader, type)) {
+    *type = -1;
+    return false;
   }
 
-  pLoader->m_BufferPrevItem = pLoader->m_BufferCurItem;
+  loader->buffer_prev_item = loader->buffer_cur_item;
   return true;
 }
 
-static int ReadData(SGhostLoader *pLoader, int Type, void *pData, size_t Size) {
-  if (!pLoader->m_File) {
+static int read_data(ghost_loader_t *loader, int type, void *data, size_t size) {
+  if (!loader->file) {
     fprintf(stderr, "ghost_loader: File not open\n");
     return 1;
   }
 
-  if (Type < 0 || Type >= 256) {
+  if (type < 0 || type >= 256) {
     fprintf(stderr, "ghost_loader: Type invalid\n");
     return 1;
   }
 
-  if (Size <= 0 || Size > MAX_ITEM_SIZE || Size % sizeof(uint32_t) != 0) {
+  if (size <= 0 || size > MAX_ITEM_SIZE || size % sizeof(uint32_t) != 0) {
     fprintf(stderr, "ghost_loader: Size invalid\n");
     return 1;
   }
 
-  if ((size_t)(pLoader->m_pBufferEnd - pLoader->m_pBufferPos) < Size) {
+  if ((size_t)(loader->buffer_end - loader->buffer_pos) < size) {
     fprintf(stderr,
             "ghost_loader: Failed to read ghost file '%s': not enough data "
             "(type='%d', got='%zu', wanted='%zu')\n",
-            pLoader->m_aFilename, Type,
-            (size_t)(pLoader->m_pBufferEnd - pLoader->m_pBufferPos), Size);
+            loader->filename, type,
+            (size_t)(loader->buffer_end - loader->buffer_pos), size);
     return 1;
   }
 
-  SGhostItem Data;
-  Data.m_Type = Type;
-  if (pLoader->m_LastItem.m_Type == Data.m_Type) {
-    UndiffItem((const uint32_t *)pLoader->m_LastItem.m_aData,
-               (const uint32_t *)pLoader->m_pBufferPos,
-               (uint32_t *)Data.m_aData, Size / sizeof(uint32_t));
+  ghost_item_t item_data;
+  item_data.type = type;
+  if (loader->last_item.type == item_data.type) {
+    undiff_item((const uint32_t *)loader->last_item.data,
+                (const uint32_t *)loader->buffer_pos,
+                (uint32_t *)item_data.data, size / sizeof(uint32_t));
   } else {
-    memcpy(Data.m_aData, pLoader->m_pBufferPos, Size);
+    memcpy(item_data.data, loader->buffer_pos, size);
   }
 
-  memcpy(pData, Data.m_aData, Size);
+  memcpy(data, item_data.data, size);
 
-  pLoader->m_LastItem = Data;
-  pLoader->m_pBufferPos += Size;
-  pLoader->m_BufferCurItem++;
+  loader->last_item = item_data;
+  loader->buffer_pos += size;
+  loader->buffer_cur_item++;
   return 0;
 }
 
-static void ResetGhostLoader(SGhostLoader *pLoader) {
-  pLoader->m_pBufferPos = pLoader->m_aBuffer;
-  pLoader->m_pBufferEnd = pLoader->m_aBuffer;
-  pLoader->m_BufferNumItems = 0;
-  pLoader->m_BufferCurItem = 0;
-  pLoader->m_BufferPrevItem = -1;
+static void reset_ghost_loader(ghost_loader_t *loader) {
+  loader->buffer_pos = loader->buffer;
+  loader->buffer_end = loader->buffer;
+  loader->buffer_num_items = 0;
+  loader->buffer_cur_item = 0;
+  loader->buffer_prev_item = -1;
 }
 
-static void Close(SGhostLoader *pLoader) {
-  if (!pLoader->m_File) {
+static void close_ghost_loader(ghost_loader_t *loader) {
+  if (!loader->file) {
     return;
   }
 
-  fclose(pLoader->m_File);
-  pLoader->m_File = NULL;
-  pLoader->m_aFilename[0] = '\0';
+  fclose(loader->file);
+  loader->file = NULL;
+  loader->filename[0] = '\0';
 }
 
-static SGhostLoader NewGhostLoader(void) {
-  SGhostLoader Loader;
-  Loader.m_File = NULL;
-  Loader.m_aFilename[0] = '\0';
-  ResetGhostLoader(&Loader);
-  return Loader;
+static ghost_loader_t new_ghost_loader(void) {
+  ghost_loader_t loader;
+  loader.file = NULL;
+  loader.filename[0] = '\0';
+  reset_ghost_loader(&loader);
+  return loader;
 }
 
-static SGhostLoader Load(const char *pFilename) {
-  SGhostLoader Loader;
-  IOHANDLE File = ReadHeader(&Loader.m_Header, pFilename);
-  if (!File)
-    return Loader;
+static ghost_loader_t init_ghost_loader(const char *filename) {
+  ghost_loader_t loader;
+  io_handle_t file = read_header(&loader.header, filename);
+  if (!file)
+    return loader;
 
-  if (Loader.m_Header.m_Version < 6)
-    io_seek(File, -(int)sizeof(SHA256_DIGEST));
+  if (loader.header.version < 6)
+    io_seek(file, -(int)sizeof(sha256_digest_t));
 
-  Loader.m_File = File;
-  strcpy(Loader.m_aFilename, pFilename);
-  Loader.m_Info = ToGhostInfo(&Loader.m_Header);
-  Loader.m_LastItem.m_Type = -1;
-  ResetBuffer(&Loader);
-  return Loader;
+  loader.file = file;
+  strcpy(loader.filename, filename);
+  loader.info = to_ghost_info(&loader.header);
+  loader.last_item.type = -1;
+  reset_loader_buffer(&loader);
+  return loader;
 }
 
-SGhostCharacter *ghost_path_get(SGhostPath *pPath, int Index) {
-  if (!pPath || !pPath->m_vpChunks || Index < 0 || Index >= pPath->m_NumItems)
+ghost_character_t *ghost_path_get(ghost_path_t *path, int index) {
+  if (!path || !path->chunks || index < 0 || index >= path->num_items)
     return NULL;
 
-  int Chunk = Index / pPath->m_ChunkSize;
-  int Pos = Index % pPath->m_ChunkSize;
-  return &pPath->m_vpChunks[Chunk][Pos];
+  int chunk = index / path->chunk_size;
+  int pos = index % path->chunk_size;
+  return &path->chunks[chunk][pos];
 }
 
-static void StrToInts(int *pInts, size_t NumInts, const char *pStr) {
-  const size_t StrSize = strlen(pStr) + 1;
+static void str_to_ints(int *ints, size_t num_ints, const char *str) {
+  const size_t str_size = strlen(str) + 1;
 
-  for (size_t i = 0; i < NumInts; i++) {
-    // Copy to temporary buffer to ensure we don't read past the end of the
-    // input string
-    char aBuf[sizeof(int)] = {0, 0, 0, 0};
-    for (size_t c = 0; c < sizeof(int) && i * sizeof(int) + c < StrSize; c++) {
-      aBuf[c] = pStr[i * sizeof(int) + c];
+  for (size_t i = 0; i < num_ints; i++) {
+    char buf[sizeof(int)] = {0, 0, 0, 0};
+    for (size_t c = 0; c < sizeof(int) && i * sizeof(int) + c < str_size; c++) {
+      buf[c] = str[i * sizeof(int) + c];
     }
 
-    pInts[i] = ((aBuf[0] + 128) << 24) | ((aBuf[1] + 128) << 16) |
-               ((aBuf[2] + 128) << 8) | (aBuf[3] + 128);
+    ints[i] = ((buf[0] + 128) << 24) | ((buf[1] + 128) << 16) |
+              ((buf[2] + 128) << 8) | (buf[3] + 128);
   }
 
-  // Last byte is always zero and unused in this format
-  pInts[NumInts - 1] &= 0xFFFFFF00;
+  ints[num_ints - 1] &= 0xFFFFFF00;
 }
 
-static bool IntsToStr(const int *pInts, size_t NumInts, char *pStr,
-                      size_t StrSize) {
-  // Unpack string without validation
-  size_t StrIndex = 0;
-  for (size_t IntIndex = 0; IntIndex < NumInts; IntIndex++) {
-    const int CurrentInt = pInts[IntIndex];
-    pStr[StrIndex] = ((CurrentInt >> 24) & 0xff) - 128;
-    StrIndex++;
-    pStr[StrIndex] = ((CurrentInt >> 16) & 0xff) - 128;
-    StrIndex++;
-    pStr[StrIndex] = ((CurrentInt >> 8) & 0xff) - 128;
-    StrIndex++;
-    pStr[StrIndex] = (CurrentInt & 0xff) - 128;
-    StrIndex++;
+static bool ints_to_str(const int *ints, size_t num_ints, char *str,
+                        size_t str_size) {
+  size_t str_index = 0;
+  for (size_t int_index = 0; int_index < num_ints; int_index++) {
+    const int current_int = ints[int_index];
+    str[str_index] = ((current_int >> 24) & 0xff) - 128;
+    str_index++;
+    str[str_index] = ((current_int >> 16) & 0xff) - 128;
+    str_index++;
+    str[str_index] = ((current_int >> 8) & 0xff) - 128;
+    str_index++;
+    str[str_index] = (current_int & 0xff) - 128;
+    str_index++;
   }
 
-  // Ensure null-termination
-  pStr[StrIndex - 1] = '\0';
+  str[str_index - 1] = '\0';
   return true;
 }
 
-static void SetGhostSkinData(SGhostSkin *pSkin, const char *pSkinName,
-                             int UseCustomColor, int ColorBody, int ColorFeet) {
-  strcpy(pSkin->m_aSkinName, pSkinName);
-  StrToInts(pSkin->m_aSkin, sizeof(pSkin->m_aSkin) / sizeof(pSkin->m_aSkin[0]),
-            pSkinName);
-  pSkin->m_UseCustomColor = UseCustomColor;
-  pSkin->m_ColorBody = ColorBody;
-  pSkin->m_ColorFeet = ColorFeet;
+static void set_ghost_skin_data(ghost_skin_t *skin, const char *skin_name,
+                                int use_custom_color, int color_body, int color_feet) {
+  strcpy(skin->skin_name, skin_name);
+  str_to_ints(skin->skin, sizeof(skin->skin) / sizeof(skin->skin[0]),
+              skin_name);
+  skin->use_custom_color = use_custom_color;
+  skin->color_body = color_body;
+  skin->color_feet = color_feet;
 }
 
-static void ResetGhostPath(SGhostPath *pPath) {
-  pPath->m_ChunkSize = 25 * 60;
-  int Chunks =
-      (pPath->m_NumItems + pPath->m_ChunkSize - 1) / pPath->m_ChunkSize;
-  for (int i = 0; i < Chunks; ++i)
-    free(pPath->m_vpChunks[i]);
-  free(pPath->m_vpChunks);
-  pPath->m_NumItems = 0;
-  pPath->m_vpChunks = NULL;
+static void reset_ghost_path(ghost_path_t *path) {
+  path->chunk_size = 25 * 60;
+  int chunks =
+      (path->num_items + path->chunk_size - 1) / path->chunk_size;
+  for (int i = 0; i < chunks; ++i)
+    free(path->chunks[i]);
+  free(path->chunks);
+  path->num_items = 0;
+  path->chunks = NULL;
 }
 
-static void SetGhostPathSize(SGhostPath *pPath, int Items) {
-  int Chunks =
-      (pPath->m_NumItems + pPath->m_ChunkSize - 1) / pPath->m_ChunkSize;
-  for (int i = 0; i < Chunks; ++i)
-    free(pPath->m_vpChunks[i]);
-  free(pPath->m_vpChunks);
+static void set_ghost_path_size(ghost_path_t *path, int items) {
+  int chunks =
+      (path->num_items + path->chunk_size - 1) / path->chunk_size;
+  for (int i = 0; i < chunks; ++i)
+    free(path->chunks[i]);
+  free(path->chunks);
 
-  int NeededChunks = (Items + pPath->m_ChunkSize - 1) / pPath->m_ChunkSize;
-  pPath->m_vpChunks = malloc(NeededChunks * sizeof(pPath->m_vpChunks));
-  for (int i = 0; i < NeededChunks; i++)
-    pPath->m_vpChunks[i] =
-        (SGhostCharacter *)calloc(pPath->m_ChunkSize, sizeof(SGhostCharacter));
+  int needed_chunks = (items + path->chunk_size - 1) / path->chunk_size;
+  path->chunks = malloc(needed_chunks * sizeof(path->chunks));
+  for (int i = 0; i < needed_chunks; i++)
+    path->chunks[i] =
+        (ghost_character_t *)calloc(path->chunk_size, sizeof(ghost_character_t));
 
-  pPath->m_NumItems = Items;
+  path->num_items = items;
 }
 
-static void ResetGhost(SGhost *pGhost) {
-  ResetGhostPath(&pGhost->m_Path);
-  pGhost->m_StartTick = -1;
-  pGhost->m_PlaybackPos = -1;
+static void reset_ghost(ghost_t *ghost) {
+  reset_ghost_path(&ghost->path);
+  ghost->start_tick = -1;
+  ghost->playback_pos = -1;
 }
 
-int load_ghost(SGhost *pGhost, const char *pFilename) {
-  SGhostLoader Loader = NewGhostLoader();
-  Loader = Load(pFilename);
-  if (!Loader.m_File)
+int load_ghost(ghost_t *ghost, const char *filename) {
+  ghost_loader_t loader = new_ghost_loader();
+  loader = init_ghost_loader(filename);
+  if (!loader.file)
     return -1;
 
-  const SGhostInfo *pInfo = &Loader.m_Info;
+  const ghost_info_t *info = &loader.info;
 
-  // select ghost
-  ResetGhost(pGhost);
-  SetGhostPathSize(&pGhost->m_Path, pInfo->m_NumTicks);
+  reset_ghost(ghost);
+  set_ghost_path_size(&ghost->path, info->num_ticks);
 
-  strcpy(pGhost->m_aPlayer, pInfo->m_aOwner);
-  strcpy(pGhost->m_aMap, pInfo->m_aMap);
-  pGhost->m_Time = pInfo->m_Time;
+  strcpy(ghost->player, info->owner);
+  strcpy(ghost->map, info->map);
+  ghost->time = info->time;
 
-  int Index = 0;
-  bool FoundSkin = false;
-  bool NoTick = false;
-  bool Error = false;
+  int index = 0;
+  bool found_skin = false;
+  bool no_tick = false;
+  bool error = false;
 
-  int Type;
-  while (!Error && ReadNextType(&Loader, &Type)) {
-    if (Index == pInfo->m_NumTicks &&
-        (Type == GHOSTDATA_TYPE_CHARACTER ||
-         Type == GHOSTDATA_TYPE_CHARACTER_NO_TICK)) {
-      Error = true;
+  int type;
+  while (!error && read_next_type(&loader, &type)) {
+    if (index == info->num_ticks &&
+        (type == GHOSTDATA_TYPE_CHARACTER ||
+         type == GHOSTDATA_TYPE_CHARACTER_NO_TICK)) {
+      error = true;
       break;
     }
 
-    if (Type == GHOSTDATA_TYPE_SKIN && !FoundSkin) {
-      FoundSkin = true;
-      if (ReadData(&Loader, Type, &pGhost->m_Skin, sizeof(SGhostSkin) - 24))
-        Error = true;
+    if (type == GHOSTDATA_TYPE_SKIN && !found_skin) {
+      found_skin = true;
+      if (read_data(&loader, type, &ghost->skin, sizeof(ghost_skin_t) - 24))
+        error = true;
       else {
-        IntsToStr(pGhost->m_Skin.m_aSkin, 6, pGhost->m_Skin.m_aSkinName, 24);
+        ints_to_str(ghost->skin.skin, 6, ghost->skin.skin_name, 24);
       }
 
-    } else if (Type == GHOSTDATA_TYPE_CHARACTER_NO_TICK) {
-      NoTick = true;
-      if (ReadData(&Loader, Type, ghost_path_get(&pGhost->m_Path, Index++),
-                   sizeof(SGhostCharacter) - sizeof(int)))
-        Error = true;
-    } else if (Type == GHOSTDATA_TYPE_CHARACTER) {
-      if (ReadData(&Loader, Type, ghost_path_get(&pGhost->m_Path, Index++),
-                   sizeof(SGhostCharacter)))
-        Error = true;
-    } else if (Type == GHOSTDATA_TYPE_START_TICK) {
-      if (ReadData(&Loader, Type, &pGhost->m_StartTick, sizeof(int)))
-        Error = true;
+    } else if (type == GHOSTDATA_TYPE_CHARACTER_NO_TICK) {
+      no_tick = true;
+      if (read_data(&loader, type, ghost_path_get(&ghost->path, index++),
+                    sizeof(ghost_character_t) - sizeof(int)))
+        error = true;
+    } else if (type == GHOSTDATA_TYPE_CHARACTER) {
+      if (read_data(&loader, type, ghost_path_get(&ghost->path, index++),
+                    sizeof(ghost_character_t)))
+        error = true;
+    } else if (type == GHOSTDATA_TYPE_START_TICK) {
+      if (read_data(&loader, type, &ghost->start_tick, sizeof(int)))
+        error = true;
     }
   }
 
-  Close(&Loader);
+  close_ghost_loader(&loader);
 
-  if (Error || Index != pInfo->m_NumTicks) {
+  if (error || index != info->num_ticks) {
     fprintf(stderr,
             "ghost: Failed to read all ghost data (error='%d', got '%d' ticks, "
             "wanted '%d' ticks)\n",
-            Error, Index, pInfo->m_NumTicks);
-    ResetGhost(pGhost);
+            error, index, info->num_ticks);
+    reset_ghost(ghost);
     return -1;
   }
 
-  if (NoTick) {
-    int StartTick = 0;
-    for (int i = 1; i < pInfo->m_NumTicks; i++) // estimate start tick
-      if (ghost_path_get(&pGhost->m_Path, i)->m_AttackTick !=
-          ghost_path_get(&pGhost->m_Path, i - 1)->m_AttackTick)
-        StartTick = ghost_path_get(&pGhost->m_Path, i)->m_AttackTick - i;
-    for (int i = 0; i < pInfo->m_NumTicks; i++)
-      ghost_path_get(&pGhost->m_Path, i - 1)->m_Tick = StartTick + i;
+  if (no_tick) {
+    int start_tick = 0;
+    for (int i = 1; i < info->num_ticks; i++)
+      if (ghost_path_get(&ghost->path, i)->attack_tick !=
+          ghost_path_get(&ghost->path, i - 1)->attack_tick)
+        start_tick = ghost_path_get(&ghost->path, i)->attack_tick - i;
+    for (int i = 0; i < info->num_ticks; i++)
+      ghost_path_get(&ghost->path, i - 1)->tick = start_tick + i;
   }
 
-  if (pGhost->m_StartTick == -1)
-    pGhost->m_StartTick = ghost_path_get(&pGhost->m_Path, 0)->m_Tick;
+  if (ghost->start_tick == -1)
+    ghost->start_tick = ghost_path_get(&ghost->path, 0)->tick;
 
-  if (!FoundSkin) {
-    SetGhostSkinData(&pGhost->m_Skin, "default", 0, 0, 0);
+  if (!found_skin) {
+    set_ghost_skin_data(&ghost->skin, "default", 0, 0, 0);
   }
 
   return 0;
 }
 
-void free_ghost(SGhost *pGhost) { ResetGhost(pGhost); }
-// ... (all your existing code from ghost_loader.c) ...
+void free_ghost(ghost_t *ghost) { reset_ghost(ghost); }
 
-// Saver {{{
-
-// --- Huffman Compression ---
-// (Relies on the HuffmanContext initialized by huffman_init)
-
-int huffman_compress(const HuffmanContext *ctx, const void *input, int in_size,
+int huffman_compress(const huffman_context_t *ctx, const void *input, int in_size,
                      void *output, int out_size) {
-  // Setup buffer pointers
   const unsigned char *src = (const unsigned char *)input;
   const unsigned char *src_end = src + in_size;
   unsigned char *dst = (unsigned char *)output;
@@ -826,10 +803,9 @@ int huffman_compress(const HuffmanContext *ctx, const void *input, int in_size,
   unsigned bitcount = 0;
 
   if (in_size == 0) {
-    // Just write EOF for empty input
-    const Node *node = &ctx->m_aNodes[HUFFMAN_EOF_SYMBOL];
-    bits |= (unsigned)node->m_Bits << bitcount;
-    bitcount += node->m_NumBits;
+    const huffman_node_t *node = &ctx->nodes[HUFFMAN_EOF_SYMBOL];
+    bits |= (unsigned)node->bits << bitcount;
+    bitcount += node->num_bits;
 
     while (bitcount >= 8) {
       if (dst >= dst_end)
@@ -844,19 +820,15 @@ int huffman_compress(const HuffmanContext *ctx, const void *input, int in_size,
     return (int)(dst - (unsigned char *)output);
   }
 
-  // {A} load the first symbol
   int symbol = *src++;
 
   while (src != src_end) {
-    // {B} load the symbol
-    const Node *node = &ctx->m_aNodes[symbol];
-    bits |= (unsigned)node->m_Bits << bitcount;
-    bitcount += node->m_NumBits;
+    const huffman_node_t *node = &ctx->nodes[symbol];
+    bits |= (unsigned)node->bits << bitcount;
+    bitcount += node->num_bits;
 
-    // {C} fetch next symbol
     symbol = *src++;
 
-    // {B} write the symbol loaded at
     while (bitcount >= 8) {
       if (dst >= dst_end)
         return -1;
@@ -866,10 +838,9 @@ int huffman_compress(const HuffmanContext *ctx, const void *input, int in_size,
     }
   }
 
-  // write the last symbol loaded from {C} or {A}
-  const Node *last_node = &ctx->m_aNodes[symbol];
-  bits |= (unsigned)last_node->m_Bits << bitcount;
-  bitcount += last_node->m_NumBits;
+  const huffman_node_t *last_node = &ctx->nodes[symbol];
+  bits |= (unsigned)last_node->bits << bitcount;
+  bitcount += last_node->num_bits;
   while (bitcount >= 8) {
     if (dst >= dst_end)
       return -1;
@@ -878,10 +849,9 @@ int huffman_compress(const HuffmanContext *ctx, const void *input, int in_size,
     bitcount -= 8;
   }
 
-  // write EOF symbol
-  const Node *eof_node = &ctx->m_aNodes[HUFFMAN_EOF_SYMBOL];
-  bits |= (unsigned)eof_node->m_Bits << bitcount;
-  bitcount += eof_node->m_NumBits;
+  const huffman_node_t *eof_node = &ctx->nodes[HUFFMAN_EOF_SYMBOL];
+  bits |= (unsigned)eof_node->bits << bitcount;
+  bitcount += eof_node->num_bits;
   while (bitcount >= 8) {
     if (dst >= dst_end)
       return -1;
@@ -890,81 +860,73 @@ int huffman_compress(const HuffmanContext *ctx, const void *input, int in_size,
     bitcount -= 8;
   }
 
-  // write out the last bits
   if (dst >= dst_end)
     return -1;
   *dst++ = bits;
 
   return (int)(dst - (unsigned char *)output);
 }
-// --- Variable Integer Packing ---
-// --- Variable Integer Packing ---
 
-// REPLACE YOUR OLD VarPack WITH THIS
-static unsigned char *VarPack(unsigned char *pDst, int i, int DstSize) {
-  if (DstSize <= 0)
+static unsigned char *var_pack(unsigned char *dst, int i, int dst_size) {
+  if (dst_size <= 0)
     return NULL;
 
-  DstSize--;
-  *pDst = 0; // Zero the byte
+  dst_size--;
+  *dst = 0;
   if (i < 0) {
-    *pDst |= 0x40; // set sign bit
+    *dst |= 0x40;
     i = ~i;
   }
 
-  *pDst |= i & 0x3F; // pack 6bit into dst
-  i >>= 6;          // discard 6 bits
+  *dst |= i & 0x3F;
+  i >>= 6;
 
   while (i) {
-    if (DstSize <= 0)
+    if (dst_size <= 0)
       return NULL;
-    *pDst |= 0x80; // set extend bit
-    DstSize--;
-    pDst++;
-    *pDst = i & 0x7F; // pack 7bit
-    i >>= 7;          // discard 7 bits
+    *dst |= 0x80;
+    dst_size--;
+    dst++;
+    *dst = i & 0x7F;
+    i >>= 7;
   }
 
-  pDst++;
-  return pDst; // Return new pointer
+  dst++;
+  return dst;
 }
 
-// REPLACE YOUR OLD VarCompress WITH THIS
-static long VarCompress(const void *pSrc_, int SrcSize, void *pDst_,
-                        int DstSize) {
-  if (SrcSize % sizeof(int) != 0) {
+static long var_compress(const void *src_void, int src_size, void *dst_void,
+                         int dst_size) {
+  if (src_size % sizeof(int) != 0) {
     return -1;
   }
 
-  const int *pSrc = (const int *)pSrc_;
-  const int *pSrcEnd = pSrc + SrcSize / sizeof(int);
-  unsigned char *pDst = (unsigned char *)pDst_;
-  const unsigned char *pDstStart = (const unsigned char *)pDst_;
-  const unsigned char *pDstEnd = pDst + DstSize;
+  const int *src = (const int *)src_void;
+  const int *src_end = src + src_size / sizeof(int);
+  unsigned char *dst = (unsigned char *)dst_void;
+  const unsigned char *dst_start = (const unsigned char *)dst_void;
+  const unsigned char *dst_end = dst + dst_size;
 
-  while (pSrc < pSrcEnd) {
-    pDst = VarPack(pDst, *pSrc, pDstEnd - pDst); // Pass remaining size
-    if (!pDst)
-      return -1; // Error (buffer overflow)
-    pSrc++;
+  while (src < src_end) {
+    dst = var_pack(dst, *src, dst_end - dst);
+    if (!dst)
+      return -1;
+    src++;
   }
 
-  return (long)(pDst - pDstStart); // Return bytes written
+  return (long)(dst - dst_start);
 }
-// --- Item Diffing ---
 
-static void DiffItem(const uint32_t *pPast, const uint32_t *pCurrent,
-                     uint32_t *pOut, size_t Size) {
-  while (Size) {
-    *pOut = *pCurrent - *pPast;
-    pOut++;
-    pPast++;
-    pCurrent++;
-    Size--;
+static void diff_item(const uint32_t *past, const uint32_t *current,
+                      uint32_t *out, size_t size) {
+  while (size) {
+    *out = *current - *past;
+    out++;
+    past++;
+    current++;
+    size--;
   }
 }
-
-// --- Big Endian Writer ---
 
 static void uint_to_bytes_be(unsigned char *bytes, unsigned val) {
   bytes[0] = (val >> 24) & 0xff;
@@ -973,231 +935,201 @@ static void uint_to_bytes_be(unsigned char *bytes, unsigned val) {
   bytes[3] = val & 0xff;
 }
 
-// --- Ghost Saver ---
+typedef struct ghost_saver_t {
+  FILE *file;
+  char filename[IO_MAX_PATH_LENGTH];
+  huffman_context_t *huffman;
 
-typedef struct GhostSaver {
-  FILE *m_File;
-  char m_aFilename[IO_MAX_PATH_LENGTH];
-  HuffmanContext *m_pHuffman;
+  unsigned char buffer[MAX_CHUNK_SIZE];
 
-  // m_aBuffer now holds RAW/DIFFED uint32_t's, not var-packed data
-  uint32_t m_aBuffer[MAX_CHUNK_SIZE];
-  // m_aBufferTemp is used for var-packing, m_aCompressBuffer for huffman
-  unsigned char m_aBufferTemp[MAX_CHUNK_SIZE * 2]; // (Varpack can expand)
-  unsigned char m_aCompressBuffer[MAX_CHUNK_SIZE * 2];
-  uint32_t *m_pBufferPos;
-  int m_BufferNumItems;
+  unsigned char buffer_temp[MAX_CHUNK_SIZE * 2];
+  unsigned char compress_buffer[MAX_CHUNK_SIZE * 2];
 
-  SGhostItem m_LastItem;
-} SGhostSaver;
+  unsigned char *buffer_pos;
+  int buffer_num_items;
 
-static void ResetSaverBuffer(SGhostSaver *pSaver) {
-  pSaver->m_pBufferPos = pSaver->m_aBuffer;
-  pSaver->m_BufferNumItems = 0;
+  ghost_item_t last_item;
+} ghost_saver_t;
+
+static void reset_saver_buffer(ghost_saver_t *saver) {
+  saver->buffer_pos = saver->buffer;
+  saver->buffer_num_items = 0;
 }
 
-// NEW FlushChunk
-static bool FlushChunk(SGhostSaver *pSaver) {
-  if (pSaver->m_BufferNumItems == 0)
+static bool flush_chunk(ghost_saver_t *saver) {
+  if (saver->buffer_num_items == 0)
     return true;
 
-  // Size (in bytes) of the raw/diffed data in the buffer
-  int RawSize = (int)((unsigned char *)pSaver->m_pBufferPos -
-                      (unsigned char *)pSaver->m_aBuffer);
+  int raw_size = (int)((unsigned char *)saver->buffer_pos -
+                       (unsigned char *)saver->buffer);
 
-  if (RawSize == 0) {
-    ResetSaverBuffer(pSaver);
-    pSaver->m_LastItem.m_Type = -1;
+  if (raw_size == 0) {
+    reset_saver_buffer(saver);
+    saver->last_item.type = -1;
     return true;
   }
 
-  // 1. Compress the entire raw/diff buffer with VarCompress
-  // m_aBuffer (raw) -> VarCompress -> m_aBufferTemp (varpacked)
-  long VarSize = VarCompress(pSaver->m_aBuffer, RawSize, pSaver->m_aBufferTemp,
-                             sizeof(pSaver->m_aBufferTemp));
-  if (VarSize < 0) {
+  long var_size = var_compress(saver->buffer, raw_size, saver->buffer_temp,
+                               sizeof(saver->buffer_temp));
+  if (var_size < 0) {
     fprintf(
         stderr,
         "ghost_saver: Failed to write ghost file '%s': varcompress failed\n",
-        pSaver->m_aFilename);
+        saver->filename);
     return false;
   }
 
-  // 2. Compress the varpacked buffer with Huffman
-  // m_aBufferTemp (var) -> huffman_compress -> m_aCompressBuffer (huffman)
-  int CompressedSize = huffman_compress(
-      pSaver->m_pHuffman, pSaver->m_aBufferTemp, (int)VarSize,
-      pSaver->m_aCompressBuffer, sizeof(pSaver->m_aCompressBuffer));
-  if (CompressedSize < 0) {
+  int compressed_size = huffman_compress(
+      saver->huffman, saver->buffer_temp, (int)var_size,
+      saver->compress_buffer, sizeof(saver->compress_buffer));
+  if (compressed_size < 0) {
     fprintf(stderr,
             "ghost_saver: Failed to write ghost file '%s': huffman compression "
             "failed\n",
-            pSaver->m_aFilename);
+            saver->filename);
     return false;
   }
 
-  // 3. Write header and huffman'd data
-  unsigned char aChunkHeader[4];
-  aChunkHeader[0] = pSaver->m_LastItem.m_Type;
-  aChunkHeader[1] = pSaver->m_BufferNumItems;
-  aChunkHeader[2] = (CompressedSize >> 8) & 0xff;
-  aChunkHeader[3] = CompressedSize & 0xff;
+  unsigned char chunk_header[4];
+  chunk_header[0] = saver->last_item.type;
+  chunk_header[1] = saver->buffer_num_items;
+  chunk_header[2] = (compressed_size >> 8) & 0xff;
+  chunk_header[3] = compressed_size & 0xff;
 
-  if (fwrite(aChunkHeader, sizeof(aChunkHeader), 1, pSaver->m_File) != 1) {
+  if (fwrite(chunk_header, sizeof(chunk_header), 1, saver->file) != 1) {
     fprintf(stderr,
             "ghost_saver: Failed to write ghost file '%s': error writing chunk "
             "header\n",
-            pSaver->m_aFilename);
+            saver->filename);
     return false;
   }
-  if (fwrite(pSaver->m_aCompressBuffer, CompressedSize, 1, pSaver->m_File) !=
+  if (fwrite(saver->compress_buffer, compressed_size, 1, saver->file) !=
       1) {
     fprintf(stderr,
             "ghost_saver: Failed to write ghost file '%s': error writing chunk "
             "data\n",
-            pSaver->m_aFilename);
+            saver->filename);
     return false;
   }
 
-  // 4. Reset buffer AND last item (this is critical)
-  ResetSaverBuffer(pSaver);
-  pSaver->m_LastItem.m_Type = -1;
+  reset_saver_buffer(saver);
+  saver->last_item.type = -1;
   return true;
 }
 
-// NEW WriteData
-static bool WriteData(SGhostSaver *pSaver, int Type, const void *pData,
-                      size_t Size) {
-  // Check if buffer has space *before* writing
-  if ((size_t)((unsigned char *)pSaver->m_aBuffer + sizeof(pSaver->m_aBuffer) -
-               (unsigned char *)pSaver->m_pBufferPos) < Size) {
-    if (!FlushChunk(pSaver))
+static bool write_data(ghost_saver_t *saver, int type, const void *data,
+                       size_t size) {
+  if ((size_t)((unsigned char *)saver->buffer + sizeof(saver->buffer) -
+               (unsigned char *)saver->buffer_pos) < size) {
+    if (!flush_chunk(saver))
       return false;
   }
 
-  SGhostItem Data;
-  Data.m_Type = Type;
-  memcpy(Data.m_aData, pData, Size);
+  ghost_item_t item_data;
+  item_data.type = type;
+  memcpy(item_data.data, data, size);
 
-  if (pSaver->m_LastItem.m_Type == Data.m_Type) {
-    // Type matches, write diffed data to buffer
-    DiffItem((const uint32_t *)pSaver->m_LastItem.m_aData,
-             (const uint32_t *)Data.m_aData, (uint32_t *)pSaver->m_pBufferPos,
-             Size / sizeof(uint32_t));
+  if (saver->last_item.type == item_data.type) {
+    diff_item((const uint32_t *)saver->last_item.data,
+              (const uint32_t *)item_data.data, (uint32_t *)saver->buffer_pos,
+              size / sizeof(uint32_t));
   } else {
-    // Type mismatch, flush old chunk, write raw data to buffer
-    if (!FlushChunk(pSaver))
+    if (!flush_chunk(saver))
       return false;
-    memcpy(pSaver->m_pBufferPos, Data.m_aData, Size);
+    memcpy(saver->buffer_pos, item_data.data, size);
   }
 
-  // Update state
-  pSaver->m_LastItem = Data;
-  pSaver->m_pBufferPos =
-      (uint32_t *)((unsigned char *)pSaver->m_pBufferPos + Size);
-  pSaver->m_BufferNumItems++;
+  saver->last_item = item_data;
+  saver->buffer_pos += size;
+  saver->buffer_num_items++;
 
-  // Check if chunk is full *after* writing
-  if (pSaver->m_BufferNumItems >= NUM_ITEMS_PER_CHUNK) {
-    if (!FlushChunk(pSaver))
+  if (saver->buffer_num_items >= NUM_ITEMS_PER_CHUNK) {
+    if (!flush_chunk(saver))
       return false;
   }
 
   return true;
 }
 
-static bool WriteHeader(FILE *pFile, SGhost *pGhost) {
-  SGhostHeader Header;
-  memset(&Header, 0, sizeof(Header));
+static bool write_header(FILE *file, ghost_t *ghost) {
+  ghost_header_t header;
+  memset(&header, 0, sizeof(header));
 
-  memcpy(Header.m_aMarker, gs_aHeaderMarker, sizeof(gs_aHeaderMarker));
-  Header.m_Version = gs_CurVersion;
-  strncpy(Header.m_aOwner, pGhost->m_aPlayer, sizeof(Header.m_aOwner));
-  strncpy(Header.m_aMap, pGhost->m_aMap, sizeof(Header.m_aMap));
-  // m_aZeroes is already zeroed (was Crc)
-  uint_to_bytes_be(Header.m_aNumTicks, pGhost->m_Path.m_NumItems);
-  uint_to_bytes_be(Header.m_aTime, pGhost->m_Time);
-  // m_MapSha256 is already zeroed
+  memcpy(header.marker, header_marker, sizeof(header_marker));
+  header.version = current_version;
+  strncpy(header.owner, ghost->player, sizeof(header.owner));
+  strncpy(header.map, ghost->map, sizeof(header.map));
+  uint_to_bytes_be(header.num_ticks, ghost->path.num_items);
+  uint_to_bytes_be(header.time, ghost->time);
 
-  if (fwrite(&Header, sizeof(Header), 1, pFile) != 1) {
+  if (fwrite(&header, sizeof(header), 1, file) != 1) {
     return false;
   }
   return true;
 }
 
-// --- Public Save Function ---
-
-// This function (the caller) remains the same
-int save_ghost(SGhost *pGhost, const char *pFilename) {
-  FILE *pFile = fopen(pFilename, "wb");
-  if (!pFile) {
+int save_ghost(ghost_t *ghost, const char *filename) {
+  FILE *file = fopen(filename, "wb");
+  if (!file) {
     fprintf(stderr, "ghost_saver: Failed to open ghost file '%s' for writing\n",
-            pFilename);
+            filename);
     return -1;
   }
 
-  if (!WriteHeader(pFile, pGhost)) {
+  if (!write_header(file, ghost)) {
     fprintf(stderr,
             "ghost_saver: Failed to write ghost file '%s': failed to write "
             "header\n",
-            pFilename);
-    fclose(pFile);
+            filename);
+    fclose(file);
     return -1;
   }
 
-  HuffmanContext Ctx;
-  huffman_init(&Ctx);
+  huffman_context_t ctx;
+  huffman_init(&ctx);
 
-  SGhostSaver Saver;
-  memset(&Saver, 0, sizeof(Saver)); // Zero init struct
-  Saver.m_File = pFile;
-  strncpy(Saver.m_aFilename, pFilename, sizeof(Saver.m_aFilename) - 1);
-  Saver.m_pHuffman = &Ctx;
-  Saver.m_LastItem.m_Type = -1;
-  ResetSaverBuffer(&Saver);
+  ghost_saver_t saver;
+  memset(&saver, 0, sizeof(saver));
+  saver.file = file;
+  strncpy(saver.filename, filename, sizeof(saver.filename) - 1);
+  saver.huffman = &ctx;
+  saver.last_item.type = -1;
+  reset_saver_buffer(&saver);
 
-  bool Error = false;
+  bool error = false;
 
-  // Write Skin
-  if (!WriteData(&Saver, GHOSTDATA_TYPE_SKIN, &pGhost->m_Skin,
-                 sizeof(SGhostSkin) - 24)) {
-    Error = true;
+  if (!write_data(&saver, GHOSTDATA_TYPE_SKIN, &ghost->skin,
+                  sizeof(ghost_skin_t) - 24)) {
+    error = true;
   }
 
-  // Write Start Tick
-  if (!Error && !WriteData(&Saver, GHOSTDATA_TYPE_START_TICK,
-                           &pGhost->m_StartTick, sizeof(int))) {
-    Error = true;
+  if (!error && !write_data(&saver, GHOSTDATA_TYPE_START_TICK,
+                            &ghost->start_tick, sizeof(int))) {
+    error = true;
   }
 
-  // Write Path
-  for (int i = 0; i < pGhost->m_Path.m_NumItems; i++) {
-    if (Error)
+  for (int i = 0; i < ghost->path.num_items; i++) {
+    if (error)
       break;
-    SGhostCharacter *pChar = ghost_path_get(&pGhost->m_Path, i);
-    if (!WriteData(&Saver, GHOSTDATA_TYPE_CHARACTER, pChar,
-                   sizeof(SGhostCharacter))) {
-      Error = true;
+    ghost_character_t *character = ghost_path_get(&ghost->path, i);
+    if (!write_data(&saver, GHOSTDATA_TYPE_CHARACTER, character,
+                    sizeof(ghost_character_t))) {
+      error = true;
     }
   }
 
-  // Flush remaining data
-  if (!Error && !FlushChunk(&Saver)) {
-    Error = true;
+  if (!error && !flush_chunk(&saver)) {
+    error = true;
   }
 
-  fclose(pFile);
+  fclose(file);
 
-  if (Error) {
+  if (error) {
     fprintf(stderr,
             "ghost_saver: An error occurred while writing ghost data to '%s'\n",
-            pFilename);
-    // You might want to remove the corrupted file here
-    // remove(pFilename);
+            filename);
     return -1;
   }
 
   return 0;
 }
-
-// }}}

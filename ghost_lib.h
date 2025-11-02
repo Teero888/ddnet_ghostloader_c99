@@ -8,49 +8,49 @@
 extern "C" {
 #endif
 
-typedef struct GhostSkin {
-  int m_aSkin[6];
-  int m_UseCustomColor;
-  int m_ColorBody;
-  int m_ColorFeet;
-  char m_aSkinName[24];
-} SGhostSkin;
+typedef struct ghost_skin_t {
+  int skin[6];
+  int use_custom_color;
+  int color_body;
+  int color_feet;
+  char skin_name[24];
+} ghost_skin_t;
 
-typedef struct GhostCharacter {
-  int m_X;
-  int m_Y;
-  int m_VelX;
-  int m_VelY;
-  int m_Angle;
-  int m_Direction;
-  int m_Weapon;
-  int m_HookState;
-  int m_HookX;
-  int m_HookY;
-  int m_AttackTick;
-  int m_Tick;
-} SGhostCharacter;
+typedef struct ghost_character_t {
+  int x;
+  int y;
+  int vel_x;
+  int vel_y;
+  int angle;
+  int direction;
+  int weapon;
+  int hook_state;
+  int hook_x;
+  int hook_y;
+  int attack_tick;
+  int tick;
+} ghost_character_t;
 
-typedef struct GhostPath {
-  int m_ChunkSize;
-  int m_NumItems;
-  SGhostCharacter **m_vpChunks;
-} SGhostPath;
+typedef struct ghost_path_t {
+  int chunk_size;
+  int num_items;
+  ghost_character_t **chunks;
+} ghost_path_t;
 
-typedef struct Ghost {
-  SGhostSkin m_Skin;
-  SGhostPath m_Path;
-  int m_StartTick;
-  char m_aPlayer[16];
-  int m_PlaybackPos;
-  char m_aMap[64];
-  int m_Time;
-} SGhost;
+typedef struct ghost_t {
+  ghost_skin_t skin;
+  ghost_path_t path;
+  int start_tick;
+  char player[16];
+  int playback_pos;
+  char map[64];
+  int time;
+} ghost_t;
 
-SGhostCharacter *ghost_path_get(SGhostPath *pPath, int Index);
-int load_ghost(SGhost *pGhost, const char *pFilename);
-int save_ghost(SGhost *pGhost, const char *pFilename);
-void free_ghost(SGhost *pGhost);
+ghost_character_t *ghost_path_get(ghost_path_t *path, int index);
+int load_ghost(ghost_t *ghost, const char *filename);
+int save_ghost(ghost_t *ghost, const char *filename);
+void free_ghost(ghost_t *ghost);
 
 #ifdef __cplusplus
 }
