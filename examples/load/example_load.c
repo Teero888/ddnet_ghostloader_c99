@@ -1,11 +1,12 @@
-#include "ghost_lib.h"
+#include <ddnet_ghost/ghost.h>
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {
-  const char *filename = "run_dead_silence.gho";
-  if (argc > 1) {
-    filename = argv[1];
+  if (argc <= 1) {
+    printf("No ghost file specified\n");
+    return 1;
   }
+  const char *filename = argv[1];
 
   printf("Attempting to load ghost file: %s\n", filename);
 

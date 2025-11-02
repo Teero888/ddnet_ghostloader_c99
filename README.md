@@ -1,4 +1,4 @@
-# DDNet Ghost C
+# DDNet Ghost
 
 This is a minimalistic C99-compatible ghost file library, inspired by the ghost file loading and saving code from [DDNet](https://github.com/ddnet/ddnet).
 
@@ -128,4 +128,15 @@ int main(void) {
   ghost_free(ghost);
   return 0;
 }
+```
+
+# Building
+
+You can either use this project as a cmake submodule via the cmake `add_subdirectory` command and then link with it or just copy the ghost.h and ghost.c files to your project and compile them alongside your project.
+
+You can also install this library system wide:
+```
+mkdir build && cd build
+cmake ..
+sudo make install
 ```

@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(example_load)
+add_executable(${PROJECT_NAME} example_load.c)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(${PROJECT_NAME} PRIVATE ddnet_ghost)

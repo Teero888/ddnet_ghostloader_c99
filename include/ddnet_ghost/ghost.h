@@ -1,5 +1,5 @@
-#ifndef GHOST_LIB_H
-#define GHOST_LIB_H
+#ifndef DDNET_GHOST_H
+#define DDNET_GHOST_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -62,4 +62,4 @@ ghost_character_t *ghost_get_snap(const ghost_path_t *path, int index);
 }
 #endif
 
-#endif // GHOST_LIB_H
+#endif // DDNET_GHOST_H

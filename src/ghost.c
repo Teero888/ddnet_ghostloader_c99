@@ -1,4 +1,4 @@
-#include "ghost_lib.h"
+#include <ddnet_ghost/ghost.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
