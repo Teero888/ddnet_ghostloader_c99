@@ -1,5 +1,5 @@
-#ifndef LIB_GHOST_H
-#define LIB_GHOST_H
+#ifndef GHOST_LIB_H
+#define GHOST_LIB_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -47,13 +47,19 @@ typedef struct ghost_t {
   int time;
 } ghost_t;
 
-ghost_character_t *ghost_path_get(ghost_path_t *path, int index);
-int load_ghost(ghost_t *ghost, const char *filename);
-int save_ghost(ghost_t *ghost, const char *filename);
-void free_ghost(ghost_t *ghost);
+ghost_t *ghost_load(const char *filename);
+ghost_t *ghost_create(void);
+void ghost_free(ghost_t *ghost);
+int ghost_save(const ghost_t *ghost, const char *filename);
+void ghost_set_meta(ghost_t *ghost, const char *player, const char *map,
+                    int time_ms);
+void ghost_set_skin(ghost_t *ghost, const char *skin_name, int use_custom_color,
+                    int color_body, int color_feet);
+void ghost_add_snap(ghost_t *ghost, const ghost_character_t *snap);
+ghost_character_t *ghost_get_snap(const ghost_path_t *path, int index);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // LIB_GHOST_H
+#endif // GHOST_LIB_H

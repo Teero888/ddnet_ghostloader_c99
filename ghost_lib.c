@@ -60,8 +60,8 @@ static int compare_nodes(const void *a, const void *b) {
   return node_b->frequency - node_a->frequency;
 }
 
-static void set_bits_recursive(huffman_node_t *nodes, huffman_node_t *node, int bits,
-                               unsigned depth) {
+static void set_bits_recursive(huffman_node_t *nodes, huffman_node_t *node,
+                               int bits, unsigned depth) {
   if (node->leafs[1] != 0xffff)
     set_bits_recursive(nodes, &nodes[node->leafs[1]], bits | (1 << depth),
                        depth + 1);
@@ -74,7 +74,8 @@ static void set_bits_recursive(huffman_node_t *nodes, huffman_node_t *node, int 
   }
 }
 
-static void construct_tree(huffman_context_t *ctx, const unsigned *frequencies) {
+static void construct_tree(huffman_context_t *ctx,
+                           const unsigned *frequencies) {
   construct_node_t nodes_left_storage[HUFFMAN_MAX_SYMBOLS];
   construct_node_t *nodes_left[HUFFMAN_MAX_SYMBOLS];
   int num_nodes_left = HUFFMAN_MAX_SYMBOLS;
@@ -94,7 +95,8 @@ static void construct_tree(huffman_context_t *ctx, const unsigned *frequencies) 
   ctx->num_nodes = HUFFMAN_MAX_SYMBOLS;
 
   while (num_nodes_left > 1) {
-    qsort(nodes_left, num_nodes_left, sizeof(construct_node_t *), compare_nodes);
+    qsort(nodes_left, num_nodes_left, sizeof(construct_node_t *),
+          compare_nodes);
 
     huffman_node_t *new_node = &ctx->nodes[ctx->num_nodes];
     new_node->num_bits = 0;
@@ -113,7 +115,7 @@ static void construct_tree(huffman_context_t *ctx, const unsigned *frequencies) 
   set_bits_recursive(ctx->nodes, ctx->start_node, 0, 0);
 }
 
-void huffman_init(huffman_context_t *ctx) {
+static void huffman_init(huffman_context_t *ctx) {
   memset(ctx, 0, sizeof(*ctx));
   construct_tree(ctx, huffman_freq_table);
 
@@ -136,8 +138,8 @@ void huffman_init(huffman_context_t *ctx) {
   }
 }
 
-int huffman_decompress(const huffman_context_t *ctx, const void *input,
-                       int in_size, void *output, int out_size) {
+static int huffman_decompress(const huffman_context_t *ctx, const void *input,
+                              int in_size, void *output, int out_size) {
   const unsigned char *src = (const unsigned char *)input;
   const unsigned char *src_end = src + in_size;
   unsigned char *dst = (unsigned char *)output;
@@ -283,9 +285,9 @@ static int get_time(const ghost_header_t *header) {
   return bytes_be_to_uint(header->time);
 }
 
-static bool validate_header(const ghost_header_t *header, const char *filename) {
-  if (memcmp(header->marker, header_marker, sizeof(header_marker)) !=
-      0) {
+static bool validate_header(const ghost_header_t *header,
+                            const char *filename) {
+  if (memcmp(header->marker, header_marker, sizeof(header_marker)) != 0) {
     fprintf(
         stderr,
         "ghost_loader: Failed to read ghost file '%s': invalid header marker\n",
@@ -488,9 +490,8 @@ static bool read_chunk(ghost_loader_t *loader, int *type) {
   huffman_context_t ctx;
   huffman_init(&ctx);
 
-  size =
-      huffman_decompress(&ctx, loader->buffer, size, loader->buffer_temp,
-                         sizeof(loader->buffer_temp));
+  size = huffman_decompress(&ctx, loader->buffer, size, loader->buffer_temp,
+                            sizeof(loader->buffer_temp));
   if (size < 0) {
     fprintf(
         stderr,
@@ -534,7 +535,8 @@ static bool read_next_type(ghost_loader_t *loader, int *type) {
   return true;
 }
 
-static int read_data(ghost_loader_t *loader, int type, void *data, size_t size) {
+static int read_data(ghost_loader_t *loader, int type, void *data,
+                     size_t size) {
   if (!loader->file) {
     fprintf(stderr, "ghost_loader: File not open\n");
     return 1;
@@ -577,14 +579,6 @@ static int read_data(ghost_loader_t *loader, int type, void *data, size_t size) 
   return 0;
 }
 
-static void reset_ghost_loader(ghost_loader_t *loader) {
-  loader->buffer_pos = loader->buffer;
-  loader->buffer_end = loader->buffer;
-  loader->buffer_num_items = 0;
-  loader->buffer_cur_item = 0;
-  loader->buffer_prev_item = -1;
-}
-
 static void close_ghost_loader(ghost_loader_t *loader) {
   if (!loader->file) {
     return;
@@ -599,15 +593,17 @@ static ghost_loader_t new_ghost_loader(void) {
   ghost_loader_t loader;
   loader.file = NULL;
   loader.filename[0] = '\0';
-  reset_ghost_loader(&loader);
+  reset_loader_buffer(&loader);
   return loader;
 }
 
 static ghost_loader_t init_ghost_loader(const char *filename) {
   ghost_loader_t loader;
   io_handle_t file = read_header(&loader.header, filename);
-  if (!file)
+  if (!file) {
+    loader.file = NULL;
     return loader;
+  }
 
   if (loader.header.version < 6)
     io_seek(file, -(int)sizeof(sha256_digest_t));
@@ -620,7 +616,7 @@ static ghost_loader_t init_ghost_loader(const char *filename) {
   return loader;
 }
 
-ghost_character_t *ghost_path_get(ghost_path_t *path, int index) {
+ghost_character_t *ghost_get_snap(const ghost_path_t *path, int index) {
   if (!path || !path->chunks || index < 0 || index >= path->num_items)
     return NULL;
 
@@ -664,20 +660,14 @@ static bool ints_to_str(const int *ints, size_t num_ints, char *str,
   return true;
 }
 
-static void set_ghost_skin_data(ghost_skin_t *skin, const char *skin_name,
-                                int use_custom_color, int color_body, int color_feet) {
-  strcpy(skin->skin_name, skin_name);
-  str_to_ints(skin->skin, sizeof(skin->skin) / sizeof(skin->skin[0]),
-              skin_name);
-  skin->use_custom_color = use_custom_color;
-  skin->color_body = color_body;
-  skin->color_feet = color_feet;
-}
-
 static void reset_ghost_path(ghost_path_t *path) {
-  path->chunk_size = 25 * 60;
-  int chunks =
-      (path->num_items + path->chunk_size - 1) / path->chunk_size;
+  if (!path->chunks) {
+    path->num_items = 0;
+    return;
+  }
+  int chunks = (path->num_items + path->chunk_size - 1) / path->chunk_size;
+  if (chunks < 0)
+    chunks = 0;
   for (int i = 0; i < chunks; ++i)
     free(path->chunks[i]);
   free(path->chunks);
@@ -686,18 +676,30 @@ static void reset_ghost_path(ghost_path_t *path) {
 }
 
 static void set_ghost_path_size(ghost_path_t *path, int items) {
-  int chunks =
-      (path->num_items + path->chunk_size - 1) / path->chunk_size;
-  for (int i = 0; i < chunks; ++i)
-    free(path->chunks[i]);
-  free(path->chunks);
+  reset_ghost_path(path);
+
+  if (items <= 0)
+    return;
 
   int needed_chunks = (items + path->chunk_size - 1) / path->chunk_size;
-  path->chunks = malloc(needed_chunks * sizeof(path->chunks));
-  for (int i = 0; i < needed_chunks; i++)
-    path->chunks[i] =
-        (ghost_character_t *)calloc(path->chunk_size, sizeof(ghost_character_t));
-
+  path->chunks =
+      (ghost_character_t **)calloc(needed_chunks, sizeof(ghost_character_t *));
+  if (!path->chunks) {
+    path->num_items = 0;
+    return;
+  }
+  for (int i = 0; i < needed_chunks; i++) {
+    path->chunks[i] = (ghost_character_t *)calloc(path->chunk_size,
+                                                  sizeof(ghost_character_t));
+    if (!path->chunks[i]) {
+      for (int j = 0; j < i; j++)
+        free(path->chunks[j]);
+      free(path->chunks);
+      path->num_items = 0;
+      path->chunks = NULL;
+      return;
+    }
+  }
   path->num_items = items;
 }
 
@@ -707,16 +709,29 @@ static void reset_ghost(ghost_t *ghost) {
   ghost->playback_pos = -1;
 }
 
-int load_ghost(ghost_t *ghost, const char *filename) {
+ghost_t *ghost_load(const char *filename) {
   ghost_loader_t loader = new_ghost_loader();
   loader = init_ghost_loader(filename);
   if (!loader.file)
-    return -1;
+    return NULL;
+
+  ghost_t *ghost = (ghost_t *)calloc(1, sizeof(ghost_t));
+  if (!ghost) {
+    close_ghost_loader(&loader);
+    return NULL;
+  }
+  ghost->path.chunk_size = 25 * 60;
 
   const ghost_info_t *info = &loader.info;
 
   reset_ghost(ghost);
   set_ghost_path_size(&ghost->path, info->num_ticks);
+  if (ghost->path.num_items != info->num_ticks) {
+    fprintf(stderr, "ghost: Failed to allocate memory for path\n");
+    close_ghost_loader(&loader);
+    ghost_free(ghost);
+    return NULL;
+  }
 
   strcpy(ghost->player, info->owner);
   strcpy(ghost->map, info->map);
@@ -746,11 +761,11 @@ int load_ghost(ghost_t *ghost, const char *filename) {
 
     } else if (type == GHOSTDATA_TYPE_CHARACTER_NO_TICK) {
       no_tick = true;
-      if (read_data(&loader, type, ghost_path_get(&ghost->path, index++),
+      if (read_data(&loader, type, ghost_get_snap(&ghost->path, index++),
                     sizeof(ghost_character_t) - sizeof(int)))
         error = true;
     } else if (type == GHOSTDATA_TYPE_CHARACTER) {
-      if (read_data(&loader, type, ghost_path_get(&ghost->path, index++),
+      if (read_data(&loader, type, ghost_get_snap(&ghost->path, index++),
                     sizeof(ghost_character_t)))
         error = true;
     } else if (type == GHOSTDATA_TYPE_START_TICK) {
@@ -766,34 +781,39 @@ int load_ghost(ghost_t *ghost, const char *filename) {
             "ghost: Failed to read all ghost data (error='%d', got '%d' ticks, "
             "wanted '%d' ticks)\n",
             error, index, info->num_ticks);
-    reset_ghost(ghost);
-    return -1;
+    ghost_free(ghost);
+    return NULL;
   }
 
   if (no_tick) {
     int start_tick = 0;
     for (int i = 1; i < info->num_ticks; i++)
-      if (ghost_path_get(&ghost->path, i)->attack_tick !=
-          ghost_path_get(&ghost->path, i - 1)->attack_tick)
-        start_tick = ghost_path_get(&ghost->path, i)->attack_tick - i;
+      if (ghost_get_snap(&ghost->path, i)->attack_tick !=
+          ghost_get_snap(&ghost->path, i - 1)->attack_tick)
+        start_tick = ghost_get_snap(&ghost->path, i)->attack_tick - i;
     for (int i = 0; i < info->num_ticks; i++)
-      ghost_path_get(&ghost->path, i - 1)->tick = start_tick + i;
+      ghost_get_snap(&ghost->path, i - 1)->tick = start_tick + i;
   }
 
-  if (ghost->start_tick == -1)
-    ghost->start_tick = ghost_path_get(&ghost->path, 0)->tick;
+  if (ghost->start_tick == -1 && ghost->path.num_items > 0)
+    ghost->start_tick = ghost_get_snap(&ghost->path, 0)->tick;
 
   if (!found_skin) {
-    set_ghost_skin_data(&ghost->skin, "default", 0, 0, 0);
+    ghost_set_skin(ghost, "default", 0, 0, 0);
   }
 
-  return 0;
+  return ghost;
 }
 
-void free_ghost(ghost_t *ghost) { reset_ghost(ghost); }
+void ghost_free(ghost_t *ghost) {
+  if (!ghost)
+    return;
+  reset_ghost_path(&ghost->path);
+  free(ghost);
+}
 
-int huffman_compress(const huffman_context_t *ctx, const void *input, int in_size,
-                     void *output, int out_size) {
+int huffman_compress(const huffman_context_t *ctx, const void *input,
+                     int in_size, void *output, int out_size) {
   const unsigned char *src = (const unsigned char *)input;
   const unsigned char *src_end = src + in_size;
   unsigned char *dst = (unsigned char *)output;
@@ -979,9 +999,9 @@ static bool flush_chunk(ghost_saver_t *saver) {
     return false;
   }
 
-  int compressed_size = huffman_compress(
-      saver->huffman, saver->buffer_temp, (int)var_size,
-      saver->compress_buffer, sizeof(saver->compress_buffer));
+  int compressed_size =
+      huffman_compress(saver->huffman, saver->buffer_temp, (int)var_size,
+                       saver->compress_buffer, sizeof(saver->compress_buffer));
   if (compressed_size < 0) {
     fprintf(stderr,
             "ghost_saver: Failed to write ghost file '%s': huffman compression "
@@ -1003,8 +1023,7 @@ static bool flush_chunk(ghost_saver_t *saver) {
             saver->filename);
     return false;
   }
-  if (fwrite(saver->compress_buffer, compressed_size, 1, saver->file) !=
-      1) {
+  if (fwrite(saver->compress_buffer, compressed_size, 1, saver->file) != 1) {
     fprintf(stderr,
             "ghost_saver: Failed to write ghost file '%s': error writing chunk "
             "data\n",
@@ -1051,7 +1070,7 @@ static bool write_data(ghost_saver_t *saver, int type, const void *data,
   return true;
 }
 
-static bool write_header(FILE *file, ghost_t *ghost) {
+static bool write_header(FILE *file, const ghost_t *ghost) {
   ghost_header_t header;
   memset(&header, 0, sizeof(header));
 
@@ -1068,7 +1087,7 @@ static bool write_header(FILE *file, ghost_t *ghost) {
   return true;
 }
 
-int save_ghost(ghost_t *ghost, const char *filename) {
+int ghost_save(const ghost_t *ghost, const char *filename) {
   FILE *file = fopen(filename, "wb");
   if (!file) {
     fprintf(stderr, "ghost_saver: Failed to open ghost file '%s' for writing\n",
@@ -1111,7 +1130,7 @@ int save_ghost(ghost_t *ghost, const char *filename) {
   for (int i = 0; i < ghost->path.num_items; i++) {
     if (error)
       break;
-    ghost_character_t *character = ghost_path_get(&ghost->path, i);
+    ghost_character_t *character = ghost_get_snap(&ghost->path, i);
     if (!write_data(&saver, GHOSTDATA_TYPE_CHARACTER, character,
                     sizeof(ghost_character_t))) {
       error = true;
@@ -1132,4 +1151,72 @@ int save_ghost(ghost_t *ghost, const char *filename) {
   }
 
   return 0;
+}
+
+ghost_t *ghost_create(void) {
+  ghost_t *ghost = (ghost_t *)calloc(1, sizeof(ghost_t));
+  if (!ghost)
+    return NULL;
+
+  ghost->path.chunk_size = 25 * 60;
+  ghost->start_tick = -1;
+  ghost->playback_pos = -1;
+
+  ghost_set_skin(ghost, "default", 0, 0, 0);
+  return ghost;
+}
+
+void ghost_set_meta(ghost_t *ghost, const char *player, const char *map,
+                    int time_ms) {
+  if (!ghost)
+    return;
+  strncpy(ghost->player, player, sizeof(ghost->player) - 1);
+  ghost->player[sizeof(ghost->player) - 1] = '\0';
+  strncpy(ghost->map, map, sizeof(ghost->map) - 1);
+  ghost->map[sizeof(ghost->map) - 1] = '\0';
+  ghost->time = time_ms;
+}
+
+void ghost_set_skin(ghost_t *ghost, const char *skin_name, int use_custom_color,
+                    int color_body, int color_feet) {
+  if (!ghost)
+    return;
+  strncpy(ghost->skin.skin_name, skin_name, sizeof(ghost->skin.skin_name) - 1);
+  ghost->skin.skin_name[sizeof(ghost->skin.skin_name) - 1] = '\0';
+  str_to_ints(ghost->skin.skin, 6, skin_name);
+  ghost->skin.use_custom_color = use_custom_color;
+  ghost->skin.color_body = color_body;
+  ghost->skin.color_feet = color_feet;
+}
+
+void ghost_add_snap(ghost_t *ghost, const ghost_character_t *snap) {
+  if (!ghost || !snap)
+    return;
+
+  if (ghost->start_tick == -1 && snap->tick > 0)
+    ghost->start_tick = snap->tick;
+
+  int chunk = ghost->path.num_items / ghost->path.chunk_size;
+  int pos = ghost->path.num_items % ghost->path.chunk_size;
+
+  if (pos == 0) {
+    int num_chunks = chunk + 1;
+    ghost_character_t **new_chunks = (ghost_character_t **)realloc(
+        ghost->path.chunks, num_chunks * sizeof(ghost_character_t *));
+    if (!new_chunks) {
+      fprintf(stderr, "ghost: Failed to realloc chunks\n");
+      return;
+    }
+    ghost->path.chunks = new_chunks;
+
+    ghost->path.chunks[chunk] = (ghost_character_t *)calloc(
+        ghost->path.chunk_size, sizeof(ghost_character_t));
+    if (!ghost->path.chunks[chunk]) {
+      fprintf(stderr, "ghost: Failed to calloc chunk\n");
+      return;
+    }
+  }
+
+  memcpy(&ghost->path.chunks[chunk][pos], snap, sizeof(ghost_character_t));
+  ghost->path.num_items++;
 }
