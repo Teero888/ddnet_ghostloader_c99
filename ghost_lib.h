@@ -4,15 +4,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct GhostSkin {
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct GhostSkin {
   int m_aSkin[6];
   int m_UseCustomColor;
   int m_ColorBody;
   int m_ColorFeet;
   char m_aSkinName[24];
-} typedef SGhostSkin;
+} SGhostSkin;
 
-struct GhostCharacter {
+typedef struct GhostCharacter {
   int m_X;
   int m_Y;
   int m_VelX;
@@ -25,28 +29,31 @@ struct GhostCharacter {
   int m_HookY;
   int m_AttackTick;
   int m_Tick;
-} typedef SGhostCharacter;
+} SGhostCharacter;
 
-struct GhostPath {
+typedef struct GhostPath {
   int m_ChunkSize;
   int m_NumItems;
-
   SGhostCharacter **m_vpChunks;
-} typedef SGhostPath;
+} SGhostPath;
 
-struct Ghost {
+typedef struct Ghost {
   SGhostSkin m_Skin;
   SGhostPath m_Path;
   int m_StartTick;
   char m_aPlayer[16];
   int m_PlaybackPos;
-
   char m_aMap[64];
   int m_Time;
-} typedef SGhost;
+} SGhost;
 
 SGhostCharacter *ghost_path_get(SGhostPath *pPath, int Index);
 int load_ghost(SGhost *pGhost, const char *pFilename);
+int save_ghost(SGhost *pGhost, const char *pFilename);
 void free_ghost(SGhost *pGhost);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // LIB_GHOST_H

@@ -1,6 +1,6 @@
 // vim:foldmethod=marker
 
-#include "ghost_loader.h"
+#include "ghost_lib.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -807,3 +807,397 @@ int load_ghost(SGhost *pGhost, const char *pFilename) {
 }
 
 void free_ghost(SGhost *pGhost) { ResetGhost(pGhost); }
+// ... (all your existing code from ghost_loader.c) ...
+
+// Saver {{{
+
+// --- Huffman Compression ---
+// (Relies on the HuffmanContext initialized by huffman_init)
+
+int huffman_compress(const HuffmanContext *ctx, const void *input, int in_size,
+                     void *output, int out_size) {
+  // Setup buffer pointers
+  const unsigned char *src = (const unsigned char *)input;
+  const unsigned char *src_end = src + in_size;
+  unsigned char *dst = (unsigned char *)output;
+  unsigned char *dst_end = dst + out_size;
+
+  unsigned bits = 0;
+  unsigned bitcount = 0;
+
+  if (in_size == 0) {
+    // Just write EOF for empty input
+    const Node *node = &ctx->m_aNodes[HUFFMAN_EOF_SYMBOL];
+    bits |= (unsigned)node->m_Bits << bitcount;
+    bitcount += node->m_NumBits;
+
+    while (bitcount >= 8) {
+      if (dst >= dst_end)
+        return -1;
+      *dst++ = bits & 0xff;
+      bits >>= 8;
+      bitcount -= 8;
+    }
+    if (dst >= dst_end)
+      return -1;
+    *dst++ = bits & 0xff;
+    return (int)(dst - (unsigned char *)output);
+  }
+
+  // {A} load the first symbol
+  int symbol = *src++;
+
+  while (src != src_end) {
+    // {B} load the symbol
+    const Node *node = &ctx->m_aNodes[symbol];
+    bits |= (unsigned)node->m_Bits << bitcount;
+    bitcount += node->m_NumBits;
+
+    // {C} fetch next symbol
+    symbol = *src++;
+
+    // {B} write the symbol loaded at
+    while (bitcount >= 8) {
+      if (dst >= dst_end)
+        return -1;
+      *dst++ = (unsigned char)(bits & 0xff);
+      bits >>= 8;
+      bitcount -= 8;
+    }
+  }
+
+  // write the last symbol loaded from {C} or {A}
+  const Node *last_node = &ctx->m_aNodes[symbol];
+  bits |= (unsigned)last_node->m_Bits << bitcount;
+  bitcount += last_node->m_NumBits;
+  while (bitcount >= 8) {
+    if (dst >= dst_end)
+      return -1;
+    *dst++ = (unsigned char)(bits & 0xff);
+    bits >>= 8;
+    bitcount -= 8;
+  }
+
+  // write EOF symbol
+  const Node *eof_node = &ctx->m_aNodes[HUFFMAN_EOF_SYMBOL];
+  bits |= (unsigned)eof_node->m_Bits << bitcount;
+  bitcount += eof_node->m_NumBits;
+  while (bitcount >= 8) {
+    if (dst >= dst_end)
+      return -1;
+    *dst++ = (unsigned char)(bits & 0xff);
+    bits >>= 8;
+    bitcount -= 8;
+  }
+
+  // write out the last bits
+  if (dst >= dst_end)
+    return -1;
+  *dst++ = bits;
+
+  return (int)(dst - (unsigned char *)output);
+}
+// --- Variable Integer Packing ---
+// --- Variable Integer Packing ---
+
+// REPLACE YOUR OLD VarPack WITH THIS
+static unsigned char *VarPack(unsigned char *pDst, int i, int DstSize) {
+  if (DstSize <= 0)
+    return NULL;
+
+  DstSize--;
+  *pDst = 0; // Zero the byte
+  if (i < 0) {
+    *pDst |= 0x40; // set sign bit
+    i = ~i;
+  }
+
+  *pDst |= i & 0x3F; // pack 6bit into dst
+  i >>= 6;          // discard 6 bits
+
+  while (i) {
+    if (DstSize <= 0)
+      return NULL;
+    *pDst |= 0x80; // set extend bit
+    DstSize--;
+    pDst++;
+    *pDst = i & 0x7F; // pack 7bit
+    i >>= 7;          // discard 7 bits
+  }
+
+  pDst++;
+  return pDst; // Return new pointer
+}
+
+// REPLACE YOUR OLD VarCompress WITH THIS
+static long VarCompress(const void *pSrc_, int SrcSize, void *pDst_,
+                        int DstSize) {
+  if (SrcSize % sizeof(int) != 0) {
+    return -1;
+  }
+
+  const int *pSrc = (const int *)pSrc_;
+  const int *pSrcEnd = pSrc + SrcSize / sizeof(int);
+  unsigned char *pDst = (unsigned char *)pDst_;
+  const unsigned char *pDstStart = (const unsigned char *)pDst_;
+  const unsigned char *pDstEnd = pDst + DstSize;
+
+  while (pSrc < pSrcEnd) {
+    pDst = VarPack(pDst, *pSrc, pDstEnd - pDst); // Pass remaining size
+    if (!pDst)
+      return -1; // Error (buffer overflow)
+    pSrc++;
+  }
+
+  return (long)(pDst - pDstStart); // Return bytes written
+}
+// --- Item Diffing ---
+
+static void DiffItem(const uint32_t *pPast, const uint32_t *pCurrent,
+                     uint32_t *pOut, size_t Size) {
+  while (Size) {
+    *pOut = *pCurrent - *pPast;
+    pOut++;
+    pPast++;
+    pCurrent++;
+    Size--;
+  }
+}
+
+// --- Big Endian Writer ---
+
+static void uint_to_bytes_be(unsigned char *bytes, unsigned val) {
+  bytes[0] = (val >> 24) & 0xff;
+  bytes[1] = (val >> 16) & 0xff;
+  bytes[2] = (val >> 8) & 0xff;
+  bytes[3] = val & 0xff;
+}
+
+// --- Ghost Saver ---
+
+typedef struct GhostSaver {
+  FILE *m_File;
+  char m_aFilename[IO_MAX_PATH_LENGTH];
+  HuffmanContext *m_pHuffman;
+
+  // m_aBuffer now holds RAW/DIFFED uint32_t's, not var-packed data
+  uint32_t m_aBuffer[MAX_CHUNK_SIZE];
+  // m_aBufferTemp is used for var-packing, m_aCompressBuffer for huffman
+  unsigned char m_aBufferTemp[MAX_CHUNK_SIZE * 2]; // (Varpack can expand)
+  unsigned char m_aCompressBuffer[MAX_CHUNK_SIZE * 2];
+  uint32_t *m_pBufferPos;
+  int m_BufferNumItems;
+
+  SGhostItem m_LastItem;
+} SGhostSaver;
+
+static void ResetSaverBuffer(SGhostSaver *pSaver) {
+  pSaver->m_pBufferPos = pSaver->m_aBuffer;
+  pSaver->m_BufferNumItems = 0;
+}
+
+// NEW FlushChunk
+static bool FlushChunk(SGhostSaver *pSaver) {
+  if (pSaver->m_BufferNumItems == 0)
+    return true;
+
+  // Size (in bytes) of the raw/diffed data in the buffer
+  int RawSize = (int)((unsigned char *)pSaver->m_pBufferPos -
+                      (unsigned char *)pSaver->m_aBuffer);
+
+  if (RawSize == 0) {
+    ResetSaverBuffer(pSaver);
+    pSaver->m_LastItem.m_Type = -1;
+    return true;
+  }
+
+  // 1. Compress the entire raw/diff buffer with VarCompress
+  // m_aBuffer (raw) -> VarCompress -> m_aBufferTemp (varpacked)
+  long VarSize = VarCompress(pSaver->m_aBuffer, RawSize, pSaver->m_aBufferTemp,
+                             sizeof(pSaver->m_aBufferTemp));
+  if (VarSize < 0) {
+    fprintf(
+        stderr,
+        "ghost_saver: Failed to write ghost file '%s': varcompress failed\n",
+        pSaver->m_aFilename);
+    return false;
+  }
+
+  // 2. Compress the varpacked buffer with Huffman
+  // m_aBufferTemp (var) -> huffman_compress -> m_aCompressBuffer (huffman)
+  int CompressedSize = huffman_compress(
+      pSaver->m_pHuffman, pSaver->m_aBufferTemp, (int)VarSize,
+      pSaver->m_aCompressBuffer, sizeof(pSaver->m_aCompressBuffer));
+  if (CompressedSize < 0) {
+    fprintf(stderr,
+            "ghost_saver: Failed to write ghost file '%s': huffman compression "
+            "failed\n",
+            pSaver->m_aFilename);
+    return false;
+  }
+
+  // 3. Write header and huffman'd data
+  unsigned char aChunkHeader[4];
+  aChunkHeader[0] = pSaver->m_LastItem.m_Type;
+  aChunkHeader[1] = pSaver->m_BufferNumItems;
+  aChunkHeader[2] = (CompressedSize >> 8) & 0xff;
+  aChunkHeader[3] = CompressedSize & 0xff;
+
+  if (fwrite(aChunkHeader, sizeof(aChunkHeader), 1, pSaver->m_File) != 1) {
+    fprintf(stderr,
+            "ghost_saver: Failed to write ghost file '%s': error writing chunk "
+            "header\n",
+            pSaver->m_aFilename);
+    return false;
+  }
+  if (fwrite(pSaver->m_aCompressBuffer, CompressedSize, 1, pSaver->m_File) !=
+      1) {
+    fprintf(stderr,
+            "ghost_saver: Failed to write ghost file '%s': error writing chunk "
+            "data\n",
+            pSaver->m_aFilename);
+    return false;
+  }
+
+  // 4. Reset buffer AND last item (this is critical)
+  ResetSaverBuffer(pSaver);
+  pSaver->m_LastItem.m_Type = -1;
+  return true;
+}
+
+// NEW WriteData
+static bool WriteData(SGhostSaver *pSaver, int Type, const void *pData,
+                      size_t Size) {
+  // Check if buffer has space *before* writing
+  if ((size_t)((unsigned char *)pSaver->m_aBuffer + sizeof(pSaver->m_aBuffer) -
+               (unsigned char *)pSaver->m_pBufferPos) < Size) {
+    if (!FlushChunk(pSaver))
+      return false;
+  }
+
+  SGhostItem Data;
+  Data.m_Type = Type;
+  memcpy(Data.m_aData, pData, Size);
+
+  if (pSaver->m_LastItem.m_Type == Data.m_Type) {
+    // Type matches, write diffed data to buffer
+    DiffItem((const uint32_t *)pSaver->m_LastItem.m_aData,
+             (const uint32_t *)Data.m_aData, (uint32_t *)pSaver->m_pBufferPos,
+             Size / sizeof(uint32_t));
+  } else {
+    // Type mismatch, flush old chunk, write raw data to buffer
+    if (!FlushChunk(pSaver))
+      return false;
+    memcpy(pSaver->m_pBufferPos, Data.m_aData, Size);
+  }
+
+  // Update state
+  pSaver->m_LastItem = Data;
+  pSaver->m_pBufferPos =
+      (uint32_t *)((unsigned char *)pSaver->m_pBufferPos + Size);
+  pSaver->m_BufferNumItems++;
+
+  // Check if chunk is full *after* writing
+  if (pSaver->m_BufferNumItems >= NUM_ITEMS_PER_CHUNK) {
+    if (!FlushChunk(pSaver))
+      return false;
+  }
+
+  return true;
+}
+
+static bool WriteHeader(FILE *pFile, SGhost *pGhost) {
+  SGhostHeader Header;
+  memset(&Header, 0, sizeof(Header));
+
+  memcpy(Header.m_aMarker, gs_aHeaderMarker, sizeof(gs_aHeaderMarker));
+  Header.m_Version = gs_CurVersion;
+  strncpy(Header.m_aOwner, pGhost->m_aPlayer, sizeof(Header.m_aOwner));
+  strncpy(Header.m_aMap, pGhost->m_aMap, sizeof(Header.m_aMap));
+  // m_aZeroes is already zeroed (was Crc)
+  uint_to_bytes_be(Header.m_aNumTicks, pGhost->m_Path.m_NumItems);
+  uint_to_bytes_be(Header.m_aTime, pGhost->m_Time);
+  // m_MapSha256 is already zeroed
+
+  if (fwrite(&Header, sizeof(Header), 1, pFile) != 1) {
+    return false;
+  }
+  return true;
+}
+
+// --- Public Save Function ---
+
+// This function (the caller) remains the same
+int save_ghost(SGhost *pGhost, const char *pFilename) {
+  FILE *pFile = fopen(pFilename, "wb");
+  if (!pFile) {
+    fprintf(stderr, "ghost_saver: Failed to open ghost file '%s' for writing\n",
+            pFilename);
+    return -1;
+  }
+
+  if (!WriteHeader(pFile, pGhost)) {
+    fprintf(stderr,
+            "ghost_saver: Failed to write ghost file '%s': failed to write "
+            "header\n",
+            pFilename);
+    fclose(pFile);
+    return -1;
+  }
+
+  HuffmanContext Ctx;
+  huffman_init(&Ctx);
+
+  SGhostSaver Saver;
+  memset(&Saver, 0, sizeof(Saver)); // Zero init struct
+  Saver.m_File = pFile;
+  strncpy(Saver.m_aFilename, pFilename, sizeof(Saver.m_aFilename) - 1);
+  Saver.m_pHuffman = &Ctx;
+  Saver.m_LastItem.m_Type = -1;
+  ResetSaverBuffer(&Saver);
+
+  bool Error = false;
+
+  // Write Skin
+  if (!WriteData(&Saver, GHOSTDATA_TYPE_SKIN, &pGhost->m_Skin,
+                 sizeof(SGhostSkin) - 24)) {
+    Error = true;
+  }
+
+  // Write Start Tick
+  if (!Error && !WriteData(&Saver, GHOSTDATA_TYPE_START_TICK,
+                           &pGhost->m_StartTick, sizeof(int))) {
+    Error = true;
+  }
+
+  // Write Path
+  for (int i = 0; i < pGhost->m_Path.m_NumItems; i++) {
+    if (Error)
+      break;
+    SGhostCharacter *pChar = ghost_path_get(&pGhost->m_Path, i);
+    if (!WriteData(&Saver, GHOSTDATA_TYPE_CHARACTER, pChar,
+                   sizeof(SGhostCharacter))) {
+      Error = true;
+    }
+  }
+
+  // Flush remaining data
+  if (!Error && !FlushChunk(&Saver)) {
+    Error = true;
+  }
+
+  fclose(pFile);
+
+  if (Error) {
+    fprintf(stderr,
+            "ghost_saver: An error occurred while writing ghost data to '%s'\n",
+            pFilename);
+    // You might want to remove the corrupted file here
+    // remove(pFilename);
+    return -1;
+  }
+
+  return 0;
+}
+
+// }}}
